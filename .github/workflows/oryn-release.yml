@@ -1,0 +1,99 @@
+# Oryn 发布：tag `oryn-v*` 触发，构建 linux-x64 / linux-arm64 的单文件 omp 与 RPC 类型声明并发布 Release。
+# 规程见 ORYN.md。
+name: oryn-release
+
+on:
+   push:
+      tags: ["oryn-v*"]
+   workflow_dispatch:
+      inputs:
+         tag:
+            description: "要发布的已有 tag（oryn-v<版本>-<序号>）"
+            required: true
+
+permissions:
+   contents: read
+
+concurrency:
+   group: oryn-release-${{ github.event.inputs.tag || github.ref_name }}
+   cancel-in-progress: false
+
+env:
+   RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+   build:
+      name: build ${{ matrix.asset }}
+      runs-on: ${{ matrix.runner }}
+      timeout-minutes: 45
+      strategy:
+         fail-fast: false
+         matrix:
+            include:
+               - runner: ubuntu-24.04
+                 target: bun-linux-x64-baseline
+                 asset: omp-linux-x64
+                 emit_dts: true
+               - runner: ubuntu-24.04-arm
+                 target: bun-linux-arm64
+                 asset: omp-linux-arm64
+                 emit_dts: false
+      steps:
+         - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+           with:
+              ref: ${{ env.RELEASE_TAG }}
+         - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+           with:
+              bun-version: 1.4.4
+         - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+           with:
+              node-version: "24"
+         # 锁文件带有 nornzach 嵌套 GUI 布局（packages/gui）的条目，--frozen-lockfile 会失败；构建只需要依赖装齐。
+         - name: bun install
+           run: bun install
+         - name: Build omp
+           run: bun scripts/oryn/build-agent.ts --target ${{ matrix.target }} --out dist/${{ matrix.asset }}
+         - name: omp --version
+           run: ./dist/${{ matrix.asset }} --version
+         - name: omp --smoke-test
+           run: ./dist/${{ matrix.asset }} --smoke-test
+         - name: smoke-rpc
+           run: node scripts/oryn/smoke-rpc.mjs ./dist/${{ matrix.asset }}
+         - name: Emit omp-rpc-types.d.ts
+           if: ${{ matrix.emit_dts }}
+           run: bun scripts/oryn/emit-rpc-dts.ts --out dist/omp-rpc-types.d.ts
+         - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+           with:
+              name: ${{ matrix.asset }}
+              path: |
+                 dist/${{ matrix.asset }}
+                 dist/omp-rpc-types.d.ts
+              if-no-files-found: error
+              retention-days: 7
+
+   release:
+      needs: build
+      runs-on: ubuntu-24.04
+      timeout-minutes: 15
+      permissions:
+         contents: write
+      steps:
+         - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+           with:
+              path: dist
+              merge-multiple: true
+         - name: SHA256SUMS
+           working-directory: dist
+           run: |
+              ls -la
+              sha256sum omp-linux-x64 omp-linux-arm64 omp-rpc-types.d.ts > SHA256SUMS
+              cat SHA256SUMS
+         - name: Publish release
+           env:
+              GH_TOKEN: ${{ github.token }}
+              GH_REPO: ${{ github.repository }}
+           run: |
+              commit="$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)"
+              notes="Oryn agent build from \`$commit\`. See ORYN.md."
+              gh release create "$RELEASE_TAG" --title "$RELEASE_TAG" --notes "$notes" \
+                 dist/omp-linux-x64 dist/omp-linux-arm64 dist/omp-rpc-types.d.ts dist/SHA256SUMS
