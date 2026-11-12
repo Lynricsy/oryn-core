@@ -209,7 +209,7 @@ try {
 	}
 
 	const header = [
-		"// 由 oryn-agent `scripts/oryn/emit-rpc-dts.ts` 自动生成，请勿手改。",
+		"// 由 oryn-core `scripts/oryn/emit-rpc-dts.ts` 自动生成，请勿手改。",
 		"// 来源：packages/coding-agent/src/modes/rpc/rpc-types.ts",
 		"",
 		...RUNTIME_SHIMS,

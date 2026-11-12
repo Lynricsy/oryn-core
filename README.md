@@ -1,15 +1,11 @@
 > [!IMPORTANT]
-> **This is the [`nornzach/oh-my-pi`](https://github.com/nornzach/oh-my-pi) working fork of [`can1357/oh-my-pi`](https://github.com/can1357/oh-my-pi).** It tracks upstream and additionally carries the RPC/agent enablement the [omp GUI](https://github.com/nornzach/oh-my-pi-gui) depends on (remote-client RPC commands, queue management + `queue_update` frames, login-shell spawn env, and related session/runtime work).
+> **Oryn Core** 是 [Oryn](https://github.com/Lynricsy/Oryn) 的 agent 内核。Oryn 是一套带高级环境（每个线程一台隔离机器 orb、Portal、浏览器 Profile）与跨平台客户端（Web / 桌面 / 移动 / CLI）的 agent 系统；本仓库提供其中运行在 orb 内的 agent 本体。
 >
-> **It is the build-from-source monorepo for the GUI**: clone this fork, nest the GUI repo at `packages/gui/`, then `bun run build:omp` inside it — see the [GUI README](https://github.com/nornzach/oh-my-pi-gui#build-from-source) for the full sequence.
+> 本仓库 fork 自 [oh-my-pi（omp）](https://github.com/can1357/oh-my-pi)，并合入了 [`nornzach/oh-my-pi`](https://github.com/nornzach/oh-my-pi) 的 RPC 扩展；omp 以 MIT License 发布，原版权声明与许可证见 [`LICENSE`](LICENSE)。Oryn 的同步规程、新增文件约定与构建发布见 [`ORYN.md`](ORYN.md)。
 >
-> **Upstream sync (kept open on purpose):** `upstream` = `can1357/oh-my-pi` stays the sync remote — feature updates are pulled from upstream regularly and this fork's GUI-enablement commits ride on top:
-> ```bash
-> git fetch upstream && git merge upstream/main   # or rebase the fork commits onto it
-> ```
-> Remote layout for this checkout: `origin` = this fork (push target), `upstream` = can1357 (sync source, never push).
+> 远端：`origin` = 本仓库，`upstream` = `can1357/oh-my-pi`，`nornzach` = `nornzach/oh-my-pi`（后两者只拉取、从不推送）。
 >
-> Everything below is the upstream README, unmodified.
+> 以下为 omp 上游 README 原文。
 
 ---
 
