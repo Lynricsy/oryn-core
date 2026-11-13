@@ -32,6 +32,12 @@ scripts/oryn/sync.sh
 - **生成物冲突不手工解。** `rpc-wire.schema.json`、`rpc-wire.generated.ts`、`sdk/go/omp-rpc/wire.go` 以及 Python / Rust SDK 绑定出现冲突时，先解完源文件（`wire/*.ts` 等），再 `bun run gen:rpc` 重新生成并提交生成结果。
 - `bun.lock` 中带有 nornzach 嵌套 GUI 布局（`packages/gui`）的条目，本仓库没有该目录，`bun install` 会改写锁文件；`sync.sh` 在安装后把锁文件还原为合并结果，**不要提交**由 `bun install` 产生的锁文件改动。
 
+## 对现有文件的改动（例外清单）
+
+以下改动无法只靠新增文件完成，合并冲突时以保留这些行为为准：
+
+- **模型速度档位**（`oryn-v18.19.0-2`）：`get_state` 增加 `fastModeSupported`、`ultrafastSupported`、`ultrafastEnabled`，新增 `set_ultrafast_mode` 命令。涉及 `session/model-controls.ts`（`isFastModeSupported()` / `isUltrafastModeSupported()`）、`session/agent-session.ts`（转发）、`modes/rpc/rpc-mode.ts`、`rpc-types.ts`、`rpc-client.ts`、`wire/commands.ts`、`wire/state.ts`、`docs/rpc.md` 与对应测试；生成物由 `bun run gen:rpc` 重新生成。
+
 ## 脚本
 
 | 文件 | 用途 |
