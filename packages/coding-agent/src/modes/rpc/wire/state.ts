@@ -115,6 +115,12 @@ export const stateDefs = {
 		autoCompactionEnabled: absentAs("boolean", false),
 		fastModeEnabled: absentAs("boolean", false),
 		fastModeActive: absentAs("boolean", false),
+		fastModeSupported: absentAs(doc("boolean", "`/fast` (the `priority` tier) applies to the active model."), false),
+		ultrafastSupported: absentAs(
+			doc("boolean", "`/fast ultra` (the OpenAI `ultrafast` tier) applies to the active model."),
+			false,
+		),
+		ultrafastEnabled: absentAs(doc("boolean", "`/fast ultra` is on for the active model."), false),
 		slowModeSupported: absentAs(doc("boolean", "`/slow` applies to the active model."), false),
 		slowModeEnabled: absentAs(
 			doc("boolean", "`/slow` is on for the active model; always `false` when `slowModeSupported` is `false`."),

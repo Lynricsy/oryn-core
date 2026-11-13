@@ -3053,6 +3053,9 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					fastModeEnabled: session.isFastModeEnabled(),
 					tokensPerSecond: calculateTokensPerSecond(session.messages, session.isStreaming),
 					fastModeActive: session.isFastModeActive(),
+					fastModeSupported: session.isFastModeSupported(),
+					ultrafastSupported: session.isUltrafastModeSupported(),
+					ultrafastEnabled: session.isUltrafastModeEnabled(),
 					slowModeSupported: session.isSlowModeSupported(),
 					slowModeEnabled: session.isSlowModeEnabled(),
 					slowModeScope: session.getSlowModeScope(),
@@ -3083,6 +3086,21 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				}
 				return success(id, "set_fast_mode", {
 					enabled: session.isFastModeEnabled(),
+					active: session.isFastModeActive(),
+				});
+			}
+
+			case "set_ultrafast_mode": {
+				// 与 set_slow_mode 一致：非布尔的 enabled 直接拒绝，不改动档位。
+				if (typeof command.enabled !== "boolean") {
+					return error(id, "set_ultrafast_mode", "set_ultrafast_mode requires boolean enabled");
+				}
+				const supported = session.setUltrafastMode(command.enabled);
+				if (command.enabled && !supported) {
+					return error(id, "set_ultrafast_mode", "Ultrafast is unavailable for the current model.");
+				}
+				return success(id, "set_ultrafast_mode", {
+					enabled: session.isUltrafastModeEnabled(),
 					active: session.isFastModeActive(),
 				});
 			}

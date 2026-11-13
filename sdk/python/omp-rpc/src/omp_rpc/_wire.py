@@ -655,6 +655,12 @@ class SessionState:
     auto_compaction_enabled: bool = False
     fast_mode_enabled: bool = False
     fast_mode_active: bool = False
+    fast_mode_supported: bool = False
+    """`/fast` (the `priority` tier) applies to the active model."""
+    ultrafast_supported: bool = False
+    """`/fast ultra` (the OpenAI `ultrafast` tier) applies to the active model."""
+    ultrafast_enabled: bool = False
+    """`/fast ultra` is on for the active model."""
     slow_mode_supported: bool = False
     """`/slow` applies to the active model."""
     slow_mode_enabled: bool = False
@@ -2220,6 +2226,9 @@ def parse_session_state(value: object, path: str = "SessionState") -> SessionSta
         auto_compaction_enabled=defaulted(payload, "autoCompactionEnabled", decode_bool, path, False),
         fast_mode_enabled=defaulted(payload, "fastModeEnabled", decode_bool, path, False),
         fast_mode_active=defaulted(payload, "fastModeActive", decode_bool, path, False),
+        fast_mode_supported=defaulted(payload, "fastModeSupported", decode_bool, path, False),
+        ultrafast_supported=defaulted(payload, "ultrafastSupported", decode_bool, path, False),
+        ultrafast_enabled=defaulted(payload, "ultrafastEnabled", decode_bool, path, False),
         slow_mode_supported=defaulted(payload, "slowModeSupported", decode_bool, path, False),
         slow_mode_enabled=defaulted(payload, "slowModeEnabled", decode_bool, path, False),
         slow_mode_scope=optional(payload, "slowModeScope", _decode_slow_mode_scope, path),
@@ -3769,6 +3778,12 @@ class WireClient:
         params: dict[str, object] = {}
         params["enabled"] = enabled
         return parse_fast_mode_result(self._command("set_fast_mode", params), "set_fast_mode")
+
+    def set_ultrafast_mode(self, enabled: bool) -> FastModeResult:
+        """Turn `/fast ultra` (the OpenAI `ultrafast` service tier) on or off for the active model."""
+        params: dict[str, object] = {}
+        params["enabled"] = enabled
+        return parse_fast_mode_result(self._command("set_ultrafast_mode", params), "set_ultrafast_mode")
 
     def set_slow_mode(self, enabled: bool) -> bool:
         """Turn `/slow` on or off for the active model; returns whether it is now on."""

@@ -153,6 +153,17 @@
 				"clientOmit": []
 			},
 			{
+				"name": "set_ultrafast_mode",
+				"doc": "Turn `/fast ultra` (the OpenAI `ultrafast` service tier) on or off for the active model.",
+				"params": "SetUltrafastModeParams",
+				"result": "FastModeResult",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
 				"name": "set_slow_mode",
 				"doc": "Turn `/slow` on or off for the active model; returns whether it is now on.",
 				"params": "SetSlowModeParams",
@@ -2693,6 +2704,21 @@
 				},
 				"fastModeActive": {
 					"type": "boolean",
+					"default": false
+				},
+				"fastModeSupported": {
+					"type": "boolean",
+					"description": "`/fast` (the `priority` tier) applies to the active model.",
+					"default": false
+				},
+				"ultrafastSupported": {
+					"type": "boolean",
+					"description": "`/fast ultra` (the OpenAI `ultrafast` tier) applies to the active model.",
+					"default": false
+				},
+				"ultrafastEnabled": {
+					"type": "boolean",
+					"description": "`/fast ultra` is on for the active model.",
 					"default": false
 				},
 				"slowModeSupported": {
@@ -6842,6 +6868,17 @@
 			]
 		},
 		"SetFastModeParams": {
+			"type": "object",
+			"properties": {
+				"enabled": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"enabled"
+			]
+		},
+		"SetUltrafastModeParams": {
 			"type": "object",
 			"properties": {
 				"enabled": {

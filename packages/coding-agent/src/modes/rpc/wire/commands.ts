@@ -92,6 +92,12 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 		result: "FastModeResult",
 	},
 	{
+		name: "set_ultrafast_mode",
+		doc: "Turn `/fast ultra` (the OpenAI `ultrafast` service tier) on or off for the active model.",
+		params: { enabled: "boolean" },
+		result: "FastModeResult",
+	},
+	{
 		name: "set_slow_mode",
 		doc: "Turn `/slow` on or off for the active model; returns whether it is now on.",
 		params: { enabled: "boolean" },

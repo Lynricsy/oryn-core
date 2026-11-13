@@ -3118,6 +3118,15 @@ pub struct SessionState {
 	pub fast_mode_enabled: bool,
 	#[serde(rename = "fastModeActive", default = "default_session_state_fast_mode_active")]
 	pub fast_mode_active: bool,
+	/// `/fast` (the `priority` tier) applies to the active model.
+	#[serde(rename = "fastModeSupported", default = "default_session_state_fast_mode_supported")]
+	pub fast_mode_supported: bool,
+	/// `/fast ultra` (the OpenAI `ultrafast` tier) applies to the active model.
+	#[serde(rename = "ultrafastSupported", default = "default_session_state_ultrafast_supported")]
+	pub ultrafast_supported: bool,
+	/// `/fast ultra` is on for the active model.
+	#[serde(rename = "ultrafastEnabled", default = "default_session_state_ultrafast_enabled")]
+	pub ultrafast_enabled: bool,
 	/// `/slow` applies to the active model.
 	#[serde(rename = "slowModeSupported", default = "default_session_state_slow_mode_supported")]
 	pub slow_mode_supported: bool,
@@ -5567,6 +5576,11 @@ pub struct SetFastModeParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetUltrafastModeParams {
+	pub enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SetSlowModeParams {
 	pub enabled: bool,
 }
@@ -6559,6 +6573,18 @@ fn default_session_state_fast_mode_active() -> bool {
 	serde_json::from_str("false").expect("valid wire default")
 }
 
+fn default_session_state_fast_mode_supported() -> bool {
+	serde_json::from_str("false").expect("valid wire default")
+}
+
+fn default_session_state_ultrafast_supported() -> bool {
+	serde_json::from_str("false").expect("valid wire default")
+}
+
+fn default_session_state_ultrafast_enabled() -> bool {
+	serde_json::from_str("false").expect("valid wire default")
+}
+
 fn default_session_state_slow_mode_supported() -> bool {
 	serde_json::from_str("false").expect("valid wire default")
 }
@@ -6849,6 +6875,22 @@ pub struct SetFastModeCommand {
 
 impl Command for SetFastModeCommand {
 	const NAME: &'static str = "set_fast_mode";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = FastModeResult;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<FastModeResult>(data.unwrap_or_else(|| Value::Object(Map::new())))
+	}
+}
+
+/// Turn `/fast ultra` (the OpenAI `ultrafast` service tier) on or off for the active model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetUltrafastModeCommand {
+	pub enabled: bool,
+}
+
+impl Command for SetUltrafastModeCommand {
+	const NAME: &'static str = "set_ultrafast_mode";
 	const TIMEOUT_MS: Option<u64> = None;
 	type Output = FastModeResult;
 

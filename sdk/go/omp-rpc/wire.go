@@ -2544,6 +2544,12 @@ type SessionState struct {
 	AutoCompactionEnabled bool           `json:"autoCompactionEnabled"`
 	FastModeEnabled       bool           `json:"fastModeEnabled"`
 	FastModeActive        bool           `json:"fastModeActive"`
+	// `/fast` (the `priority` tier) applies to the active model.
+	FastModeSupported bool `json:"fastModeSupported"`
+	// `/fast ultra` (the OpenAI `ultrafast` tier) applies to the active model.
+	UltrafastSupported bool `json:"ultrafastSupported"`
+	// `/fast ultra` is on for the active model.
+	UltrafastEnabled bool `json:"ultrafastEnabled"`
 	// `/slow` applies to the active model.
 	SlowModeSupported bool `json:"slowModeSupported"`
 	// `/slow` is on for the active model; always `false` when `slowModeSupported` is `false`.
@@ -2589,6 +2595,9 @@ func (v *SessionState) decodeFrom(raw map[string]json.RawMessage) error {
 	d.defaulted("autoCompactionEnabled", &out.AutoCompactionEnabled, `false`)
 	d.defaulted("fastModeEnabled", &out.FastModeEnabled, `false`)
 	d.defaulted("fastModeActive", &out.FastModeActive, `false`)
+	d.defaulted("fastModeSupported", &out.FastModeSupported, `false`)
+	d.defaulted("ultrafastSupported", &out.UltrafastSupported, `false`)
+	d.defaulted("ultrafastEnabled", &out.UltrafastEnabled, `false`)
 	d.defaulted("slowModeSupported", &out.SlowModeSupported, `false`)
 	d.defaulted("slowModeEnabled", &out.SlowModeEnabled, `false`)
 	d.optional("slowModeScope", &out.SlowModeScope)
@@ -8631,6 +8640,18 @@ type SetFastModeCommand struct {
 func (c Commands) SetFastMode(ctx context.Context, p SetFastModeCommand) (FastModeResult, error) {
 	var out FastModeResult
 	err := c.call(ctx, "set_fast_mode", p, 0, &out)
+	return out, err
+}
+
+// SetUltrafastModeCommand holds the parameters of "set_ultrafast_mode".
+type SetUltrafastModeCommand struct {
+	Enabled bool `json:"enabled"`
+}
+
+// SetUltrafastMode sends "set_ultrafast_mode": Turn `/fast ultra` (the OpenAI `ultrafast` service tier) on or off for the active model.
+func (c Commands) SetUltrafastMode(ctx context.Context, p SetUltrafastModeCommand) (FastModeResult, error) {
+	var out FastModeResult
+	err := c.call(ctx, "set_ultrafast_mode", p, 0, &out)
 	return out, err
 }
 

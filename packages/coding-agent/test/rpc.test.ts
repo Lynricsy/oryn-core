@@ -363,3 +363,59 @@ describe("RPC fast mode with unsupported Fireworks model and priority tier", () 
 		expect(state.fastModeActive).toBe(true);
 	}, 30000);
 });
+
+describe("RPC Ultrafast on a first-party OpenAI model", () => {
+	let client: RpcClient;
+	let sessionDir: string;
+
+	beforeEach(() => {
+		sessionDir = path.join(os.tmpdir(), `omp-rpc-ultrafast-test-${Snowflake.next()}`);
+		// 启动发现限制在临时目录内，与上面的 Fireworks 用例一致。
+		client = new RpcClient({
+			cliPath: path.join(import.meta.dir, "..", "src", "cli.ts"),
+			cwd: sessionDir,
+			env: {
+				HOME: path.join(sessionDir, "home"),
+				XDG_CONFIG_HOME: path.join(sessionDir, "config"),
+				XDG_DATA_HOME: path.join(sessionDir, "data"),
+				XDG_CACHE_HOME: path.join(sessionDir, "cache"),
+				PI_CODING_AGENT_DIR: sessionDir,
+				OPENAI_API_KEY: "test-openai-key",
+			},
+			provider: "openai",
+			model: "gpt-5",
+		});
+	});
+
+	afterEach(async () => {
+		await client.stop();
+		if (sessionDir && fs.existsSync(sessionDir)) {
+			removeSyncWithRetries(sessionDir);
+		}
+	});
+
+	test("get_state reports support and set_ultrafast_mode toggles the tier", async () => {
+		await fs.promises.mkdir(sessionDir, { recursive: true });
+		await client.start();
+
+		const initial = await client.getState();
+		expect([initial.fastModeSupported, initial.ultrafastSupported, initial.ultrafastEnabled]).toEqual([
+			true,
+			true,
+			false,
+		]);
+
+		expect(await client.setUltrafastMode(true)).toEqual({ enabled: true, active: true });
+		const enabled = await client.getState();
+		expect([enabled.ultrafastEnabled, enabled.fastModeEnabled, enabled.fastModeActive]).toEqual([true, true, true]);
+
+		// 关闭 ultrafast 只清掉 ultrafast，不会留下 priority。
+		expect(await client.setUltrafastMode(false)).toEqual({ enabled: false, active: false });
+		const disabled = await client.getState();
+		expect([disabled.ultrafastEnabled, disabled.fastModeEnabled, disabled.fastModeActive]).toEqual([
+			false,
+			false,
+			false,
+		]);
+	}, 30000);
+});

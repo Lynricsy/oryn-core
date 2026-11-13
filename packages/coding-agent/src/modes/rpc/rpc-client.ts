@@ -863,6 +863,9 @@ export class RpcClient {
 			...state,
 			fastModeEnabled: state.fastModeEnabled === true,
 			fastModeActive: state.fastModeActive === true,
+			fastModeSupported: state.fastModeSupported === true,
+			ultrafastSupported: state.ultrafastSupported === true,
+			ultrafastEnabled: state.ultrafastEnabled === true,
 			slowModeSupported: state.slowModeSupported === true,
 			slowModeEnabled: state.slowModeEnabled === true,
 			goal: state.goal ?? null,
@@ -878,6 +881,14 @@ export class RpcClient {
 	 */
 	async setFastMode(enabled: boolean): Promise<{ enabled: boolean; active: boolean }> {
 		const response = await this.#send({ type: "set_fast_mode", enabled });
+		return this.#getData(response);
+	}
+
+	/**
+	 * 开启或关闭当前模型的 `/fast ultra`（OpenAI `ultrafast` 档位）。
+	 */
+	async setUltrafastMode(enabled: boolean): Promise<{ enabled: boolean; active: boolean }> {
+		const response = await this.#send({ type: "set_ultrafast_mode", enabled });
 		return this.#getData(response);
 	}
 

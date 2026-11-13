@@ -308,6 +308,42 @@ describe("RPC Pi-compatible primitives (live server)", () => {
 		});
 	}, 60000);
 
+	test("get_state reports /fast and Ultrafast support; set_ultrafast_mode refuses a Claude model", async () => {
+		const { send, next } = server;
+		send({ type: "get_state", id: "speed-state" });
+		const state = (await next()).data as {
+			fastModeSupported: unknown;
+			ultrafastSupported: unknown;
+			ultrafastEnabled: unknown;
+		};
+		// Claude 有 anthropic service-tier family（可开 /fast），但没有 OpenAI 的 ultrafast 档位。
+		expect([state.fastModeSupported, state.ultrafastSupported, state.ultrafastEnabled]).toEqual([true, false, false]);
+		send({ type: "set_ultrafast_mode", id: "ultra-bad", enabled: "true" });
+		expect(await next()).toEqual({
+			id: "ultra-bad",
+			type: "response",
+			command: "set_ultrafast_mode",
+			success: false,
+			error: "set_ultrafast_mode requires boolean enabled",
+		});
+		send({ type: "set_ultrafast_mode", id: "ultra-on", enabled: true });
+		expect(await next()).toEqual({
+			id: "ultra-on",
+			type: "response",
+			command: "set_ultrafast_mode",
+			success: false,
+			error: "Ultrafast is unavailable for the current model.",
+		});
+		send({ type: "set_ultrafast_mode", id: "ultra-off", enabled: false });
+		expect(await next()).toEqual({
+			id: "ultra-off",
+			type: "response",
+			command: "set_ultrafast_mode",
+			success: true,
+			data: { enabled: false, active: false },
+		});
+	}, 60000);
+
 	test("get_entries, get_tree, thinking levels, and command-discovery dialect", async () => {
 		const { send, next } = server;
 		send({ type: "get_entries", id: "entries-base" });

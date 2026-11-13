@@ -502,6 +502,12 @@ export interface SessionState {
 	autoCompactionEnabled?: boolean;
 	fastModeEnabled?: boolean;
 	fastModeActive?: boolean;
+	/** `/fast` (the `priority` tier) applies to the active model. */
+	fastModeSupported?: boolean;
+	/** `/fast ultra` (the OpenAI `ultrafast` tier) applies to the active model. */
+	ultrafastSupported?: boolean;
+	/** `/fast ultra` is on for the active model. */
+	ultrafastEnabled?: boolean;
 	/** `/slow` applies to the active model. */
 	slowModeSupported?: boolean;
 	/** `/slow` is on for the active model; always `false` when `slowModeSupported` is `false`. */
@@ -1759,6 +1765,10 @@ export interface SetFastModeParams {
 	enabled: boolean;
 }
 
+export interface SetUltrafastModeParams {
+	enabled: boolean;
+}
+
 export interface SetSlowModeParams {
 	enabled: boolean;
 }
@@ -2122,6 +2132,7 @@ export interface RpcWireCommands {
 	open_session: { params: OpenSessionParams; result: OpenSessionResult };
 	get_state: { params: undefined; result: SessionState };
 	set_fast_mode: { params: SetFastModeParams; result: FastModeResult };
+	set_ultrafast_mode: { params: SetUltrafastModeParams; result: FastModeResult };
 	set_slow_mode: { params: SetSlowModeParams; result: SetSlowModeResult };
 	goal: { params: GoalParams; result: GoalResult };
 	set_ask_dialog: { params: SetAskDialogParams; result: SetAskDialogResult };

@@ -147,6 +147,7 @@ Important edge behavior from runtime:
 
 - `{ id?, type: "get_state" }`
 - `{ id?, type: "set_fast_mode", enabled: boolean }`
+- `{ id?, type: "set_ultrafast_mode", enabled: boolean }`
 - `{ id?, type: "set_slow_mode", enabled: boolean }`
 - `{ id?, type: "goal", op: "get" | "create" | "resume" | "pause" | "drop", objective?: string, token_budget?: number }`
 - `{ id?, type: "set_ask_dialog", enabled: boolean }`
@@ -510,6 +511,13 @@ remain `true` while `fastModeActive` is `false`. An explicit `set_fast_mode`
 enable expresses retry intent and clears that fallback so the provider attempt
 is re-armed.
 
+`fastModeSupported` reports whether `set_fast_mode` can enable the `priority`
+tier on the active model: it has a service-tier family and, on the OpenAI
+family, offers `priority`. `ultrafastSupported` reports whether
+`set_ultrafast_mode` can enable the OpenAI `ultrafast` tier, and
+`ultrafastEnabled` whether it is selected for the active model (which also
+makes `fastModeEnabled` `true`). Re-read all three after a model change.
+
 `slowModeSupported` reports whether `/slow` applies to the active model: the
 `flex` service tier on OpenAI- and Google-family models, or the low-priority
 lane on direct Anthropic models. `slowModeEnabled` reports whether it is on for
@@ -545,6 +553,9 @@ field is absent outside both stages. No event carries it, so re-read
 	"fastModeEnabled": false,
 	"tokensPerSecond": null,
 	"fastModeActive": false,
+	"fastModeSupported": true,
+	"ultrafastSupported": false,
+	"ultrafastEnabled": false,
 	"slowModeSupported": true,
 	"slowModeEnabled": true,
 	"slowModeScope": "global",
@@ -769,6 +780,35 @@ The corresponding `get_state` result reports the same computed state:
 	"fastModeActive": true
 }
 ```
+
+### `set_ultrafast_mode` payload
+
+`set_ultrafast_mode` turns `/fast ultra` (the OpenAI `ultrafast` service tier)
+on or off for the active model, exactly like the slash command:
+
+```json
+{ "id": "req_ultra_on", "type": "set_ultrafast_mode", "enabled": true }
+```
+
+On success, `data.enabled` reports whether `/fast ultra` is now on for the
+active model and `data.active` reports the computed fast state, as in
+`set_fast_mode`:
+
+```json
+{
+	"id": "req_ultra_on",
+	"type": "response",
+	"command": "set_ultrafast_mode",
+	"success": true,
+	"data": { "enabled": true, "active": true }
+}
+```
+
+Enabling on a model where `ultrafastSupported` is `false` fails with
+`"Ultrafast is unavailable for the current model."` and leaves the tier
+unchanged. Disabling clears only an `ultrafast` selection (a `priority` tier set
+by `set_fast_mode` stays) and always succeeds. A non-boolean `enabled` is
+rejected with `"set_ultrafast_mode requires boolean enabled"`.
 
 ### `set_ask_dialog` payload
 
