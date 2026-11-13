@@ -793,6 +793,26 @@ export class ModelControls {
 	}
 
 	/**
+	 * 当前模型能否开启 `/fast`（priority），即 {@link setFastMode} 启用前的判定：
+	 * 模型有 service-tier family，且 OpenAI family 时必须能发送 `priority`。
+	 */
+	isFastModeSupported(): boolean {
+		const model = this.#model;
+		const family = model ? serviceTierFamily(model) : undefined;
+		if (!model || !family) return false;
+		return family !== "openai" || shouldSendServiceTier("priority", model);
+	}
+
+	/**
+	 * 当前模型能否开启 `/fast ultra`，即 {@link setUltrafastMode} 启用前的判定：
+	 * OpenAI family 且能发送 `ultrafast` 档位。
+	 */
+	isUltrafastModeSupported(): boolean {
+		const model = this.#model;
+		return model !== undefined && serviceTierFamily(model) === "openai" && shouldSendServiceTier("ultrafast", model);
+	}
+
+	/**
 	 * True when a fast tier is actually realized on the wire for the currently
 	 * selected model: `priority` (OpenAI/Google `service_tier`, direct Anthropic
 	 * fast mode, or Fireworks priority), or `ultrafast` where the model offers
@@ -887,7 +907,7 @@ export class ModelControls {
 			if (tier === "priority" || tier === "ultrafast") this.setServiceTierFamily(family, undefined);
 			return true;
 		}
-		if (family === "openai" && !shouldSendServiceTier("priority", model)) {
+		if (!this.isFastModeSupported()) {
 			this.#host.emitNotice(
 				"info",
 				"The current model does not offer the priority (Fast) service tier.",
@@ -909,12 +929,11 @@ export class ModelControls {
 	 * `false` is returned. Disabling clears only an `ultrafast` selection.
 	 */
 	setUltrafastMode(enabled: boolean): boolean {
-		const model = this.#model;
 		if (!enabled) {
 			if (this.#serviceTierByFamily.openai === "ultrafast") this.setServiceTierFamily("openai", undefined);
 			return true;
 		}
-		if (!model || serviceTierFamily(model) !== "openai" || !shouldSendServiceTier("ultrafast", model)) {
+		if (!this.isUltrafastModeSupported()) {
 			this.#host.emitNotice("info", "The current model does not offer the Ultrafast service tier.", "priority");
 			return false;
 		}

@@ -13240,6 +13240,11 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		return this.#models.isFastModeActive();
 	}
 
+	/** 当前模型能否开启 `/fast`（priority 档位）。 */
+	isFastModeSupported(): boolean {
+		return this.#models.isFastModeSupported();
+	}
+
 	/** Reports whether a fresh session on `model` realizes a fast tier from configured `tier.*` settings. */
 	isFastModeConfiguredFor(model: Model): boolean {
 		return this.#models.isFastModeConfiguredFor(model);
@@ -13330,6 +13335,11 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	/** Reports whether `/fast ultra` (the OpenAI `ultrafast` tier) is selected for the active model. */
 	isUltrafastModeEnabled(): boolean {
 		return this.#models.isUltrafastModeEnabled();
+	}
+
+	/** 当前模型能否开启 `/fast ultra`（OpenAI `ultrafast` 档位）。 */
+	isUltrafastModeSupported(): boolean {
+		return this.#models.isUltrafastModeSupported();
 	}
 
 	/** Enables or disables the OpenAI `ultrafast` tier; `false` when the active model does not offer it. */

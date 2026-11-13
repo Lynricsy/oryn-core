@@ -201,4 +201,29 @@ describe("/fast targets the current model's service-tier family", () => {
 		expect(session.serviceTierByFamily).toEqual({});
 		expect(session.isFastModeActive()).toBe(false);
 	});
+
+	it("reports /fast and Ultrafast support with the same predicates the setters use", async () => {
+		const claude = await createSession("anthropic", "claude-sonnet-4-5");
+		expect([claude.isFastModeSupported(), claude.isUltrafastModeSupported()]).toEqual([true, false]);
+		await claude.dispose();
+
+		const openai = await createSession("openai", "gpt-5");
+		expect([openai.isFastModeSupported(), openai.isUltrafastModeSupported()]).toEqual([true, true]);
+		await openai.dispose();
+
+		const priorityOnly = await createSessionForModel(codexModel(["priority"]));
+		expect([priorityOnly.isFastModeSupported(), priorityOnly.isUltrafastModeSupported()]).toEqual([true, false]);
+		await priorityOnly.dispose();
+
+		const ultrafastOnly = await createSessionForModel(codexModel(["ultrafast"]));
+		expect([ultrafastOnly.isFastModeSupported(), ultrafastOnly.isUltrafastModeSupported()]).toEqual([false, true]);
+		await ultrafastOnly.dispose();
+
+		const fireworks = getBundledModel("fireworks", "deepseek-v4-flash");
+		if (!fireworks) throw new Error("Expected bundled test model fireworks/deepseek-v4-flash to exist");
+		const noFamily = await createSessionForModel(fireworks);
+		expect([noFamily.isFastModeSupported(), noFamily.isUltrafastModeSupported()]).toEqual([false, false]);
+		expect(noFamily.setFastMode(true)).toBe(false);
+		expect(noFamily.setUltrafastMode(true)).toBe(false);
+	});
 });
