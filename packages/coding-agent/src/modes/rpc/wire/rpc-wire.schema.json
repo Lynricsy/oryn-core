@@ -419,6 +419,28 @@
 				"clientOmit": []
 			},
 			{
+				"name": "oryn_select_model",
+				"doc": "Oryn: select the session model by role or by provider/id and record the selection source in the transcript.",
+				"params": "OrynSelectModelParams",
+				"result": "OrynSelectModelResult",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "oryn_mark_session_start",
+				"doc": "Oryn: record how a fresh session's model was chosen; a no-op once the session has messages or a recorded source.",
+				"params": "OrynMarkSessionStartParams",
+				"result": "OrynMarkSessionStartResult",
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
 				"name": "get_available_models",
 				"doc": "List available models.",
 				"params": null,
@@ -7303,6 +7325,83 @@
 			"required": [
 				"provider",
 				"modelId"
+			]
+		},
+		"OrynSelectModelParams": {
+			"type": "object",
+			"properties": {
+				"role": {
+					"type": "string"
+				},
+				"provider": {
+					"type": "string"
+				},
+				"modelId": {
+					"type": "string"
+				}
+			}
+		},
+		"OrynSelectModelResult": {
+			"type": "object",
+			"properties": {
+				"model": {
+					"$ref": "#/$defs/ModelInfo"
+				},
+				"source": {
+					"enum": [
+						"role",
+						"manual"
+					],
+					"type": "string"
+				},
+				"thinkingLevel": {
+					"$ref": "#/$defs/ThinkingLevel"
+				},
+				"role": {
+					"type": "string"
+				},
+				"alias": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"model",
+				"source"
+			]
+		},
+		"OrynMarkSessionStartParams": {
+			"type": "object",
+			"properties": {
+				"explicitModel": {
+					"type": "boolean"
+				}
+			}
+		},
+		"OrynMarkSessionStartResult": {
+			"type": "object",
+			"properties": {
+				"recorded": {
+					"type": "boolean"
+				},
+				"source": {
+					"enum": [
+						"startup",
+						"manual"
+					],
+					"type": "string"
+				},
+				"role": {
+					"type": "string"
+				},
+				"alias": {
+					"type": "string"
+				},
+				"model": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"recorded"
 			]
 		},
 		"GetAvailableModelsResult": {

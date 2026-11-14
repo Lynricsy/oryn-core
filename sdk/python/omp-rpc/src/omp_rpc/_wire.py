@@ -1859,6 +1859,24 @@ class LiveConnectResult:
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
+class OrynSelectModelResult:
+    model: ModelInfo
+    source: Literal["role", "manual"]
+    thinking_level: ThinkingLevel | None = None
+    role: str | None = None
+    alias: str | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class OrynMarkSessionStartResult:
+    recorded: bool
+    source: Literal["startup", "manual"] | None = None
+    role: str | None = None
+    alias: str | None = None
+    model: str | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
 class GetSessionLeaseResult:
     held: tuple[str, ...]
     unknown: tuple[str, ...]
@@ -3544,6 +3562,28 @@ def parse_live_connect_result(value: object, path: str = "LiveConnectResult") ->
     )
 
 
+def parse_oryn_select_model_result(value: object, path: str = "OrynSelectModelResult") -> OrynSelectModelResult:
+    payload = expect_object(value, path)
+    return OrynSelectModelResult(
+        model=required(payload, "model", parse_model_info, path),
+        source=required(payload, "source", cast('Decoder[Literal["role", "manual"]]', literal(frozenset({"role", "manual"}))), path),
+        thinking_level=optional(payload, "thinkingLevel", _decode_thinking_level, path),
+        role=optional(payload, "role", decode_str, path),
+        alias=optional(payload, "alias", decode_str, path),
+    )
+
+
+def parse_oryn_mark_session_start_result(value: object, path: str = "OrynMarkSessionStartResult") -> OrynMarkSessionStartResult:
+    payload = expect_object(value, path)
+    return OrynMarkSessionStartResult(
+        recorded=required(payload, "recorded", decode_bool, path),
+        source=optional(payload, "source", cast('Decoder[Literal["startup", "manual"]]', literal(frozenset({"startup", "manual"}))), path),
+        role=optional(payload, "role", decode_str, path),
+        alias=optional(payload, "alias", decode_str, path),
+        model=optional(payload, "model", decode_str, path),
+    )
+
+
 def parse_get_session_lease_result(value: object, path: str = "GetSessionLeaseResult") -> GetSessionLeaseResult:
     payload = expect_object(value, path)
     return GetSessionLeaseResult(
@@ -3921,6 +3961,24 @@ class WireClient:
         params: dict[str, object] = {}
         data = self._command("cycle_model", params)
         return None if data is None else parse_model_cycle_result(data, "cycle_model")
+
+    def oryn_select_model(self, *, role: str | None = None, provider: str | None = None, model_id: str | None = None) -> OrynSelectModelResult:
+        """Oryn: select the session model by role or by provider/id and record the selection source in the transcript."""
+        params: dict[str, object] = {}
+        if role is not None:
+            params["role"] = role
+        if provider is not None:
+            params["provider"] = provider
+        if model_id is not None:
+            params["modelId"] = model_id
+        return parse_oryn_select_model_result(self._command("oryn_select_model", params), "oryn_select_model")
+
+    def oryn_mark_session_start(self, explicit_model: bool | None = None) -> OrynMarkSessionStartResult:
+        """Oryn: record how a fresh session's model was chosen; a no-op once the session has messages or a recorded source."""
+        params: dict[str, object] = {}
+        if explicit_model is not None:
+            params["explicitModel"] = explicit_model
+        return parse_oryn_mark_session_start_result(self._command("oryn_mark_session_start", params), "oryn_mark_session_start")
 
     def get_available_models(self) -> tuple[ModelInfo, ...]:
         """List available models."""
@@ -4545,6 +4603,8 @@ __all__ = [
     "NotifyUiRequest",
     "OpenSessionResult",
     "OpenUrlUiRequest",
+    "OrynMarkSessionStartResult",
+    "OrynSelectModelResult",
     "ParentIrc",
     "PromoteQueuedMessageResult",
     "PromptAck",
@@ -4746,6 +4806,8 @@ __all__ = [
     "parse_notify_ui_request",
     "parse_open_session_result",
     "parse_open_url_ui_request",
+    "parse_oryn_mark_session_start_result",
+    "parse_oryn_select_model_result",
     "parse_parent_irc",
     "parse_promote_queued_message_result",
     "parse_prompt_ack",

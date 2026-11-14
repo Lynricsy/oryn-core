@@ -5774,6 +5774,47 @@ pub struct SetModelParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OrynSelectModelParams {
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub role: Option<String>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub provider: Option<String>,
+	#[serde(rename = "modelId", default, skip_serializing_if = "Option::is_none")]
+	pub model_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OrynSelectModelResult {
+	pub model: ModelInfo,
+	pub source: OrynSelectModelResultSource,
+	#[serde(rename = "thinkingLevel", default, skip_serializing_if = "Option::is_none")]
+	pub thinking_level: Option<ThinkingLevel>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub role: Option<String>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub alias: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OrynMarkSessionStartParams {
+	#[serde(rename = "explicitModel", default, skip_serializing_if = "Option::is_none")]
+	pub explicit_model: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OrynMarkSessionStartResult {
+	pub recorded: bool,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub source: Option<OrynMarkSessionStartResultSource>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub role: Option<String>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub alias: Option<String>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GetAvailableModelsResult {
 	pub models: Vec<ModelInfo>,
 }
@@ -6503,6 +6544,42 @@ impl HostUriResultContentType {
 			Self::TextMarkdown => "text/markdown",
 			Self::ApplicationJson => "application/json",
 			Self::TextPlain => "text/plain",
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum OrynSelectModelResultSource {
+	#[serde(rename = "role")]
+	Role,
+	#[serde(rename = "manual")]
+	Manual,
+}
+
+impl OrynSelectModelResultSource {
+	/// Wire value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Role => "role",
+			Self::Manual => "manual",
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum OrynMarkSessionStartResultSource {
+	#[serde(rename = "startup")]
+	Startup,
+	#[serde(rename = "manual")]
+	Manual,
+}
+
+impl OrynMarkSessionStartResultSource {
+	/// Wire value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Startup => "startup",
+			Self::Manual => "manual",
 		}
 	}
 }
@@ -7287,6 +7364,44 @@ impl Command for CycleModelCommand {
 			None | Some(Value::Null) => Ok(None),
 			Some(value) => serde_json::from_value::<ModelCycleResult>(value).map(Some),
 		}
+	}
+}
+
+/// Oryn: select the session model by role or by provider/id and record the selection source in the transcript.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct OrynSelectModelCommand {
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub role: Option<String>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub provider: Option<String>,
+	#[serde(rename = "modelId", default, skip_serializing_if = "Option::is_none")]
+	pub model_id: Option<String>,
+}
+
+impl Command for OrynSelectModelCommand {
+	const NAME: &'static str = "oryn_select_model";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = OrynSelectModelResult;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<OrynSelectModelResult>(data.unwrap_or_else(|| Value::Object(Map::new())))
+	}
+}
+
+/// Oryn: record how a fresh session's model was chosen; a no-op once the session has messages or a recorded source.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct OrynMarkSessionStartCommand {
+	#[serde(rename = "explicitModel", default, skip_serializing_if = "Option::is_none")]
+	pub explicit_model: Option<bool>,
+}
+
+impl Command for OrynMarkSessionStartCommand {
+	const NAME: &'static str = "oryn_mark_session_start";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = OrynMarkSessionStartResult;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<OrynMarkSessionStartResult>(data.unwrap_or_else(|| Value::Object(Map::new())))
 	}
 }
 

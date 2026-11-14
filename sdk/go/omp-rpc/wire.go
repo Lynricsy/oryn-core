@@ -8152,6 +8152,100 @@ func (v *DictationStopResult) decodeFrom(raw map[string]json.RawMessage) error {
 	return nil
 }
 
+type OrynSelectModelResult struct {
+	Model         ModelInfo                   `json:"model"`
+	Source        OrynSelectModelResultSource `json:"source"`
+	ThinkingLevel *ThinkingLevel              `json:"thinkingLevel,omitempty"`
+	Role          *string                     `json:"role,omitempty"`
+	Alias         *string                     `json:"alias,omitempty"`
+}
+
+func (v *OrynSelectModelResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "OrynSelectModelResult", v.decodeFrom)
+}
+
+func (v *OrynSelectModelResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out OrynSelectModelResult
+	d := fieldDecoder{raw: raw, owner: "OrynSelectModelResult"}
+	d.required("model", &out.Model)
+	d.required("source", &out.Source)
+	d.optional("thinkingLevel", &out.ThinkingLevel)
+	d.optional("role", &out.Role)
+	d.optional("alias", &out.Alias)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type OrynSelectModelResultSource string
+
+const (
+	OrynSelectModelResultSourceRole   OrynSelectModelResultSource = "role"
+	OrynSelectModelResultSourceManual OrynSelectModelResultSource = "manual"
+)
+
+func (v *OrynSelectModelResultSource) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "OrynSelectModelResultSource")
+	if err != nil {
+		return err
+	}
+	switch value := OrynSelectModelResultSource(s); value {
+	case OrynSelectModelResultSourceRole, OrynSelectModelResultSourceManual:
+		*v = value
+		return nil
+	}
+	return unknownValue("OrynSelectModelResultSource", s)
+}
+
+type OrynMarkSessionStartResult struct {
+	Recorded bool                              `json:"recorded"`
+	Source   *OrynMarkSessionStartResultSource `json:"source,omitempty"`
+	Role     *string                           `json:"role,omitempty"`
+	Alias    *string                           `json:"alias,omitempty"`
+	Model    *string                           `json:"model,omitempty"`
+}
+
+func (v *OrynMarkSessionStartResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "OrynMarkSessionStartResult", v.decodeFrom)
+}
+
+func (v *OrynMarkSessionStartResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out OrynMarkSessionStartResult
+	d := fieldDecoder{raw: raw, owner: "OrynMarkSessionStartResult"}
+	d.required("recorded", &out.Recorded)
+	d.optional("source", &out.Source)
+	d.optional("role", &out.Role)
+	d.optional("alias", &out.Alias)
+	d.optional("model", &out.Model)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type OrynMarkSessionStartResultSource string
+
+const (
+	OrynMarkSessionStartResultSourceStartup OrynMarkSessionStartResultSource = "startup"
+	OrynMarkSessionStartResultSourceManual  OrynMarkSessionStartResultSource = "manual"
+)
+
+func (v *OrynMarkSessionStartResultSource) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "OrynMarkSessionStartResultSource")
+	if err != nil {
+		return err
+	}
+	switch value := OrynMarkSessionStartResultSource(s); value {
+	case OrynMarkSessionStartResultSourceStartup, OrynMarkSessionStartResultSourceManual:
+		*v = value
+		return nil
+	}
+	return unknownValue("OrynMarkSessionStartResultSource", s)
+}
+
 type GetAvailableModelsResult struct {
 	Models []ModelInfo `json:"models"`
 }
@@ -8903,6 +8997,32 @@ func (c Commands) SetModel(ctx context.Context, p SetModelCommand) (ModelInfo, e
 func (c Commands) CycleModel(ctx context.Context) (*ModelCycleResult, error) {
 	var out *ModelCycleResult
 	err := c.call(ctx, "cycle_model", nil, 0, &out)
+	return out, err
+}
+
+// OrynSelectModelCommand holds the parameters of "oryn_select_model".
+type OrynSelectModelCommand struct {
+	Role     *string `json:"role,omitempty"`
+	Provider *string `json:"provider,omitempty"`
+	ModelID  *string `json:"modelId,omitempty"`
+}
+
+// OrynSelectModel sends "oryn_select_model": Oryn: select the session model by role or by provider/id and record the selection source in the transcript.
+func (c Commands) OrynSelectModel(ctx context.Context, p OrynSelectModelCommand) (OrynSelectModelResult, error) {
+	var out OrynSelectModelResult
+	err := c.call(ctx, "oryn_select_model", p, 0, &out)
+	return out, err
+}
+
+// OrynMarkSessionStartCommand holds the parameters of "oryn_mark_session_start".
+type OrynMarkSessionStartCommand struct {
+	ExplicitModel *bool `json:"explicitModel,omitempty"`
+}
+
+// OrynMarkSessionStart sends "oryn_mark_session_start": Oryn: record how a fresh session's model was chosen; a no-op once the session has messages or a recorded source.
+func (c Commands) OrynMarkSessionStart(ctx context.Context, p OrynMarkSessionStartCommand) (OrynMarkSessionStartResult, error) {
+	var out OrynMarkSessionStartResult
+	err := c.call(ctx, "oryn_mark_session_start", p, 0, &out)
 	return out, err
 }
 

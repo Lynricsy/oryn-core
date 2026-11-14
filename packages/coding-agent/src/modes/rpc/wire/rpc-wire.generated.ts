@@ -1907,6 +1907,32 @@ export interface SetModelParams {
 	modelId: string;
 }
 
+export interface OrynSelectModelParams {
+	role?: string;
+	provider?: string;
+	modelId?: string;
+}
+
+export interface OrynSelectModelResult {
+	model: ModelInfo;
+	source: "role" | "manual";
+	thinkingLevel?: ThinkingLevel;
+	role?: string;
+	alias?: string;
+}
+
+export interface OrynMarkSessionStartParams {
+	explicitModel?: boolean;
+}
+
+export interface OrynMarkSessionStartResult {
+	recorded: boolean;
+	source?: "startup" | "manual";
+	role?: string;
+	alias?: string;
+	model?: string;
+}
+
 export interface GetAvailableModelsResult {
 	models: ModelInfo[];
 }
@@ -2156,6 +2182,8 @@ export interface RpcWireCommands {
 	dictation_stop: { params: undefined; result: DictationStopResult };
 	set_model: { params: SetModelParams; result: ModelInfo };
 	cycle_model: { params: undefined; result: ModelCycleResult | null };
+	oryn_select_model: { params: OrynSelectModelParams; result: OrynSelectModelResult };
+	oryn_mark_session_start: { params: OrynMarkSessionStartParams; result: OrynMarkSessionStartResult };
 	get_available_models: { params: undefined; result: GetAvailableModelsResult };
 	discover_provider_models: { params: DiscoverProviderModelsParams; result: DiscoverProviderModelsResult };
 	set_thinking_level: { params: SetThinkingLevelParams; result: undefined };

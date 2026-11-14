@@ -239,6 +239,30 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 	},
 	{ name: "cycle_model", doc: "Cycle to the next model.", result: "ModelCycleResult", nullable: true },
 	{
+		name: "oryn_select_model",
+		doc: "Oryn: select the session model by role or by provider/id and record the selection source in the transcript.",
+		params: { "role?": "string", "provider?": "string", "modelId?": "string" },
+		result: {
+			model: "ModelInfo",
+			"thinkingLevel?": "ThinkingLevel",
+			source: "'role' | 'manual'",
+			"role?": "string",
+			"alias?": "string",
+		},
+	},
+	{
+		name: "oryn_mark_session_start",
+		doc: "Oryn: record how a fresh session's model was chosen; a no-op once the session has messages or a recorded source.",
+		params: { "explicitModel?": "boolean" },
+		result: {
+			recorded: "boolean",
+			"source?": "'startup' | 'manual'",
+			"role?": "string",
+			"alias?": "string",
+			"model?": "string",
+		},
+	},
+	{
 		name: "get_available_models",
 		doc: "List available models.",
 		result: { models: "ModelInfo[]" },

@@ -235,6 +235,7 @@ import { applyRpcManageSkill, buildRpcSkillDetail } from "./rpc-skills";
 import { RpcSubagentRegistry, readRpcSubagentTranscript, resolveOwnedLiveSubagent } from "./rpc-subagents";
 import { startRpcTan } from "./rpc-tan";
 import { type HostedComponentFactory, showHostedComponent } from "./rpc-custom-ui";
+import { handleOrynMarkSessionStart, handleOrynSelectModel } from "./oryn-model-source";
 import type {
 	RpcAbortAndRestoreQueueResult,
 	RpcAvailableModelsResult,
@@ -3550,6 +3551,22 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					return success(id, "cycle_model", null);
 				}
 				return success(id, "cycle_model", result);
+			}
+
+			case "oryn_select_model": {
+				try {
+					return success(id, "oryn_select_model", await handleOrynSelectModel(session, command));
+				} catch (err) {
+					return error(id, "oryn_select_model", err instanceof Error ? err.message : String(err));
+				}
+			}
+
+			case "oryn_mark_session_start": {
+				try {
+					return success(id, "oryn_mark_session_start", await handleOrynMarkSessionStart(session, command));
+				} catch (err) {
+					return error(id, "oryn_mark_session_start", err instanceof Error ? err.message : String(err));
+				}
 			}
 
 			case "get_available_models": {

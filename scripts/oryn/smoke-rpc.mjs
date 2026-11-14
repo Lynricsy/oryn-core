@@ -2,8 +2,8 @@
 // omp RPC 冒烟探针：以 `--mode rpc-ui` 启动给定二进制，验证 Oryn 依赖的握手与串行队列未卡死。
 //
 // 以 nornzach/oh-my-pi-gui 的 `scripts/smoke-sidecar.mjs`（MIT）为蓝本：
-//   ready → negotiate_protocol{2} → get_state → get_available_models（≤6s）→ get_state
-//   → set_thinking_level → get_settings → set_setting 往返（结束后还原）。
+//   ready → negotiate_protocol{2} → get_state → oryn_select_model{}（期望参数错误，证明已接线）
+//   → get_available_models（≤6s）→ get_state → set_thinking_level → get_settings → set_setting 往返（结束后还原）。
 // 末行输出 `VERDICT PASS|FAIL`，失败退出码非 0。
 //
 // 用法：node scripts/oryn/smoke-rpc.mjs ./dist/omp-linux-x64
@@ -105,6 +105,14 @@ const line = (label, r) =>
 	await send("get_state");
 	line("get_state[boot]", results.at(-1));
 
+	// 不带参数：已接线的 Core 以参数错误拒绝；旧 Core 应答 `Unknown command`。
+	const oryn = await send("oryn_select_model");
+	const orynWired =
+		oryn.success === false && typeof oryn.error === "string" && oryn.error.startsWith("oryn_select_model requires");
+	console.log(
+		`${"oryn_select_model[wired]".padEnd(24)}${orynWired ? "ok " : "ERR"} ${results.at(-1).ms}ms ${oryn.error}`,
+	);
+
 	const modelsFrame = await send("get_available_models");
 	const models = results.at(-1);
 	line("get_available_models", models);
@@ -138,8 +146,9 @@ const line = (label, r) =>
 	const postDiscovery = [follow, mutate];
 	const wedged = postDiscovery.some(r => r.ms > WEDGE_MS);
 	const modelsReturned = models.ms <= WEDGE_MS;
-	const pass = negotiatedOk && !wedged && modelsReturned && settingsReadable && settingsPersisted;
+	const pass = negotiatedOk && orynWired && !wedged && modelsReturned && settingsReadable && settingsPersisted;
 	if (!negotiatedOk) console.log("FAIL negotiate_protocol 未协商到 v2");
+	if (!orynWired) console.log("FAIL oryn_select_model 未接线");
 	if (!modelsReturned) console.log("FAIL get_available_models 超出时限");
 	if (wedged) console.log("FAIL 模型发现后的命令卡住——串行队列阻塞");
 	console.log(

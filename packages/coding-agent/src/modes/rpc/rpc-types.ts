@@ -72,6 +72,7 @@ import type { DebugParams } from "../../tools/debug";
 import type { RpcBrowserHostInfo } from "./rpc-browser-host";
 import type { RpcGoalOp, RpcGoalResult } from "./rpc-goal";
 import type { RpcMessagesPage } from "./rpc-messages";
+import type { OrynRpcCommand, OrynRpcResponse } from "./oryn-model-source";
 
 // ============================================================================
 // RPC Commands (stdin)
@@ -708,7 +709,8 @@ export type RpcCommand =
 	| { id?: string; type: "btw"; question: string; recordId?: string }
 	| { id?: string; type: "btw_cancel"; recordId?: string }
 	| { id?: string; type: "btw_inject"; recordId: string }
-	| { id?: string; type: "get_btw_history" };
+	| { id?: string; type: "get_btw_history" }
+	| OrynRpcCommand;
 
 // ============================================================================
 // RPC State
@@ -3806,6 +3808,7 @@ export type RpcResponse =
 			success: true;
 			data: { records: readonly RpcBtwHistoryRecord[] };
 	  }
+	| OrynRpcResponse
 
 	// Error response (any command can fail); `code` is an optional machine-readable reason.
 	| {
