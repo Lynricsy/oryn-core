@@ -14,13 +14,17 @@ use crate::js;
 
 #[cfg(target_os = "linux")]
 mod linux;
+// Oryn: `PI_FILE_LOCK_BACKEND=sidecar` selects a sidecar-file backend
+// (ORYN.md).
+#[cfg(target_os = "linux")]
+mod oryn_linux;
 #[cfg(all(unix, not(target_os = "linux")))]
 mod unix;
 #[cfg(target_os = "windows")]
 mod windows;
 
 #[cfg(target_os = "linux")]
-use linux as platform;
+use oryn_linux as platform;
 #[cfg(all(unix, not(target_os = "linux")))]
 use unix as platform;
 #[cfg(target_os = "windows")]
