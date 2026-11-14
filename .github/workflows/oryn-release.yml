@@ -25,7 +25,7 @@ jobs:
    build:
       name: build ${{ matrix.asset }}
       runs-on: ${{ matrix.runner }}
-      timeout-minutes: 45
+      timeout-minutes: 120
       strategy:
          fail-fast: false
          matrix:
@@ -51,6 +51,21 @@ jobs:
          # 锁文件带有 nornzach 嵌套 GUI 布局（packages/gui）的条目，--frozen-lockfile 会失败；构建只需要依赖装齐。
          - name: bun install
            run: bun install
+         # natives 从源码构建（Oryn Core 改了 crates/pi-natives，见 ORYN.md）：系统依赖同上游 Dockerfile 的
+         # natives-builder（bindgen 需要 clang，opusic-sys 用 CMake 构建 libopus），工具链取 rust-toolchain.toml。
+         - name: Native build dependencies
+           run: |
+              sudo apt-get update
+              sudo apt-get install -y --no-install-recommends pkg-config libssl-dev clang libclang-dev cmake make ninja-build
+         - name: Rust toolchain
+           run: |
+              if ! command -v rustup >/dev/null; then
+                 curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+                 echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+                 export PATH="$HOME/.cargo/bin:$PATH"
+              fi
+              rustup show
+              cargo --version
          - name: Build omp
            run: bun scripts/oryn/build-agent.ts --target ${{ matrix.target }} --out dist/${{ matrix.asset }}
          - name: omp --version
