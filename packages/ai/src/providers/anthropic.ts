@@ -173,6 +173,7 @@ import {
 	stripClaudeToolPrefix,
 } from "./anthropic-identity";
 import { fitBedrockAnthropicPayload } from "./bedrock-anthropic";
+import { withToolChangeFallback } from "./oryn-tool-change-fallback";
 import { buildClaudeCodeTlsFetchOptions, resolveAnthropicBaseUrl } from "./anthropic-http-options";
 import {
 	buildBetaHeader,
@@ -3840,9 +3841,15 @@ const streamAnthropicOnce = (
  * loop. The inner attempt owns Anthropic provider-failure retries.
  */
 export const streamAnthropic: StreamFunction<"anthropic-messages"> = (model, context, options) =>
-	withReplaySafeStreamRetry(withoutDisabledExperimentalBetas(model), context, options, streamAnthropicOnce, {
-		retryEmptyCompletion: true,
-	});
+	withReplaySafeStreamRetry(
+		withoutDisabledExperimentalBetas(model),
+		context,
+		options,
+		withToolChangeFallback(streamAnthropicOnce),
+		{
+			retryEmptyCompletion: true,
+		},
+	);
 
 /** Whether Claude Code's `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` applies to this model's provider. */
 function experimentalBetasDisabled(model: Model<"anthropic-messages">): boolean {
