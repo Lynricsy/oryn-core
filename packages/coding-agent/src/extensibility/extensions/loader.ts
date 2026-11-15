@@ -23,6 +23,7 @@ import { type Hook, hookCapability } from "../../capability/hook";
 import { isServiceTierFamily, isServiceTierForFamily } from "../../config/service-tier";
 import { loadCapability } from "../../discovery";
 import { getExtensionNameFromPath } from "../../discovery/helpers";
+import { ORYN_PROJECT_PROVIDER_ID } from "../../discovery/oryn-project-config";
 import type { ExecOptions } from "../../exec/exec";
 import { execCommand } from "../../exec/exec";
 import { getCodingAgentApi } from "../host-api";
@@ -762,9 +763,11 @@ export async function discoverExtensionPaths(
 		// discarded here anyway (see #4198). The provider filter skips the walk
 		// entirely instead of running four foreign directory scans and dropping
 		// the results.
+		// Oryn：同时接纳 oryn-project（中央项目层 `.omp/extensions`）；同名按 key 去重，
+		// 优先级 110 的中央版本胜出，仓库/全局同名版本不再导入。
 		const discovered = await loadCapability<ExtensionModule>(extensionModuleCapability.id, {
 			...loadOptions,
-			providers: ["native"],
+			providers: ["native", ORYN_PROJECT_PROVIDER_ID],
 		});
 		for (const ext of discovered.items) {
 			await addPath(ext.path);

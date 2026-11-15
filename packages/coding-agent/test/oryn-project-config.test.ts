@@ -18,6 +18,10 @@ import { ruleCapability } from "@oh-my-pi/pi-coding-agent/capability/rule";
 import { skillCapability } from "@oh-my-pi/pi-coding-agent/capability/skill";
 import { slashCommandCapability } from "@oh-my-pi/pi-coding-agent/capability/slash-command";
 import type { ExtensionUIContext } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
+import { expandPromptTemplate } from "@oh-my-pi/pi-coding-agent/config/prompt-templates";
+import { loadCustomCommands } from "@oh-my-pi/pi-coding-agent/extensibility/custom-commands/loader";
+import { discoverExtensionPaths, loadExtensions } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/loader";
+import { discoverPromptTemplates } from "@oh-my-pi/pi-coding-agent/sdk";
 import {
 	ORYN_OMFG_GLOBAL_OPTION,
 	ORYN_OMFG_PROJECT_OPTION,
@@ -276,5 +280,91 @@ describe("/omfg with Oryn central config", () => {
 		]);
 		expect(result.state).toBe("saved");
 		expect(await exists(path.join(cwd, ".omp", "rules", "ts-no-any.md"))).toBe(true);
+	});
+});
+
+// 消费侧：真正的运行路径（扩展导入、会话模板、TS 自定义命令）要吃到中央项目层。
+describe("oryn-project consumers", () => {
+	async function layout(prefix: string) {
+		const base = await tempDir(prefix);
+		const root = path.join(base, "root");
+		const repo = path.join(base, "repo");
+		const agentDir = path.join(base, "agent");
+		await fs.mkdir(path.join(repo, ".git"), { recursive: true });
+		await fs.mkdir(agentDir, { recursive: true });
+		return { base, root, repo, agentDir };
+	}
+
+	const within = (dir: string, file: string) => file.startsWith(dir + path.sep);
+	const extensionSource = (command: string) =>
+		`export default function (pi) {\n\tpi.registerCommand(${JSON.stringify(command)}, { handler: async () => {} });\n}\n`;
+
+	test("ambient extension discovery imports central extensions and shadows the repo copy", async () => {
+		const { base, root, repo } = await layout("oryn-project-ext-");
+		await put(path.join(root, ".omp", "extensions", "central-only.ts"), extensionSource("central-only"));
+		await put(path.join(root, ".omp", "extensions", "dup.ts"), extensionSource("dup-central"));
+		await put(path.join(repo, ".omp", "extensions", "dup.ts"), extensionSource("dup-repo"));
+		await put(path.join(repo, ".omp", "extensions", "repo-only.ts"), extensionSource("repo-only"));
+
+		const load = async () => {
+			resetCapabilityCache();
+			const paths = (await discoverExtensionPaths([], repo)).filter(file => within(base, file));
+			const result = await loadExtensions(paths, repo);
+			expect(result.errors).toHaveLength(0);
+			return result.extensions.flatMap(extension => [...extension.commands.keys()]).sort();
+		};
+
+		setEnv({ ORYN_PROJECT_CONFIG_ROOT: root });
+		expect(await load()).toStrictEqual(["central-only", "dup-central", "repo-only"]);
+
+		setEnv({});
+		expect(await load()).toStrictEqual(["dup-repo", "repo-only"]);
+	});
+
+	test("session prompt templates include central prompts, which win on name clashes", async () => {
+		const { root, repo, agentDir } = await layout("oryn-project-prompts-");
+		await put(path.join(agentDir, "prompts", "dup.md"), "Global dup $1\n");
+		await put(path.join(repo, ".omp", "prompts", "dup.md"), "Repo dup $1\n");
+		await put(path.join(repo, ".omp", "prompts", "repo-only.md"), "Repo only\n");
+		await put(path.join(root, ".omp", "prompts", "dup.md"), "---\ndescription: Central dup\n---\nCentral dup $1\n");
+		await put(path.join(root, ".omp", "prompts", "nested", "central-only.md"), "Central only\n");
+
+		setEnv({ ORYN_PROJECT_CONFIG_ROOT: root });
+		const templates = await discoverPromptTemplates(repo, agentDir);
+		expect(templates.filter(template => template.name === "dup")).toHaveLength(1);
+		expect(expandPromptTemplate("/dup x", templates)).toBe("Central dup x");
+		expect(templates.find(template => template.name === "dup")?.description).toBe("Central dup (project)");
+		expect(templates.find(template => template.name === "central-only")?.source).toBe("(project:nested)");
+		expect(expandPromptTemplate("/repo-only", templates)).toBe("Repo only");
+
+		setEnv({});
+		const without = await discoverPromptTemplates(repo, agentDir);
+		expect(without.some(template => template.name === "central-only")).toBe(false);
+		expect(without.filter(template => template.name === "dup").map(template => template.content.trim())).toEqual([
+			"Global dup $1",
+			"Repo dup $1",
+		]);
+	});
+
+	test("TypeScript custom commands load from the central layer and shadow the repo copy", async () => {
+		const { base, root, repo, agentDir } = await layout("oryn-project-cmds-");
+		await put(
+			path.join(root, ".omp", "commands", "dup", "index.ts"),
+			'export default () => ({ name: "dup", description: "central", execute: async () => {} });\n',
+		);
+		// 仓库同名版本被导入就会报错：用错误为空证明它没有运行。
+		await put(path.join(repo, ".omp", "commands", "dup", "index.ts"), 'throw new Error("repo dup imported");\n');
+
+		setEnv({ ORYN_PROJECT_CONFIG_ROOT: root });
+		const withLayer = await loadCustomCommands({ cwd: repo, agentDir });
+		expect(withLayer.errors.filter(error => within(base, error.path))).toHaveLength(0);
+		const dup = withLayer.commands.find(command => command.command.name === "dup");
+		expect(dup?.path).toBe(path.join(root, ".omp", "commands", "dup", "index.ts"));
+		expect(dup?.command.description).toBe("central");
+
+		setEnv({});
+		const without = await loadCustomCommands({ cwd: repo, agentDir });
+		expect(without.commands.some(command => within(root, command.path))).toBe(false);
+		expect(without.errors.map(error => error.path)).toContain(path.join(repo, ".omp", "commands", "dup", "index.ts"));
 	});
 });

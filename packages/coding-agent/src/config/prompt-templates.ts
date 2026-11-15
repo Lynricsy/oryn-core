@@ -8,6 +8,7 @@ import {
 	parseFrontmatter,
 	prompt,
 } from "@oh-my-pi/pi-utils";
+import { orynProjectConfigRoot } from "../discovery/oryn-project-config";
 import { jtdToTypeScript } from "../tools/jtd-to-typescript";
 import { parseCommandArgs, substituteArgs } from "../utils/command-args";
 
@@ -161,6 +162,9 @@ export interface LoadPromptTemplatesOptions {
  * Load all prompt templates from:
  * 1. Global: agentDir/prompts/
  * 2. Project: cwd/.omp/prompts/
+ *
+ * Oryn：设了 `ORYN_PROJECT_CONFIG_ROOT` 时，`<root>/.omp/prompts/` 排在最前，同名模板
+ * 屏蔽全局与仓库版本（与 oryn-project provider 的优先级一致）。
  */
 export async function loadPromptTemplates(options: LoadPromptTemplatesOptions = {}): Promise<PromptTemplate[]> {
 	const resolvedCwd = options.cwd ?? getProjectDir();
@@ -177,7 +181,11 @@ export async function loadPromptTemplates(options: LoadPromptTemplatesOptions = 
 	const projectPromptsDir = getProjectPromptsDir(resolvedCwd);
 	templates.push(...(await loadTemplatesFromDir(projectPromptsDir, "project")));
 
-	return templates;
+	const orynRoot = orynProjectConfigRoot();
+	if (!orynRoot) return templates;
+	const orynTemplates = await loadTemplatesFromDir(getProjectPromptsDir(orynRoot), "project");
+	const shadowed = new Set(orynTemplates.map(template => template.name));
+	return [...orynTemplates, ...templates.filter(template => !shadowed.has(template.name))];
 }
 
 /**

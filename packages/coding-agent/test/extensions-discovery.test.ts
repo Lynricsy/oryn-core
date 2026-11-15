@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { type ExtensionModule, extensionModuleCapability } from "@oh-my-pi/pi-coding-agent/capability/extension-module";
 import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { getCapability, initializeWithSettings } from "@oh-my-pi/pi-coding-agent/discovery";
+import { ORYN_PROJECT_PROVIDER_ID } from "@oh-my-pi/pi-coding-agent/discovery/oryn-project-config";
 import {
 	discoverAndLoadExtensions,
 	discoverExtensionPaths,
@@ -762,7 +763,8 @@ describe("extensions discovery", () => {
 		expect(capability, "extension-modules capability must be registered").toBeDefined();
 
 		const providers = capability?.providers ?? [];
-		const foreignIds = providers.map(p => p.id).filter(id => id !== "native");
+		// Oryn：oryn-project 是中央项目层，也属于运行时白名单，不算外部 provider。
+		const foreignIds = providers.map(p => p.id).filter(id => id !== "native" && id !== ORYN_PROJECT_PROVIDER_ID);
 		// Guard the invariant this test is defending — without foreign providers
 		// the test would trivially pass and hide a future regression.
 		expect(foreignIds.length).toBeGreaterThan(0);

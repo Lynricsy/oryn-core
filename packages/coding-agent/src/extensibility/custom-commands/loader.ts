@@ -8,8 +8,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { type } from "@oh-my-pi/omptype";
 import * as zod from "@oh-my-pi/omptype/zod";
-import { getAgentDir, getProjectDir, isEnoent, logger } from "@oh-my-pi/pi-utils";
+import { getAgentDir, getProjectAgentDir, getProjectDir, isEnoent, logger } from "@oh-my-pi/pi-utils";
 import { getConfigDirs } from "../../config";
+import { orynProjectConfigRoot } from "../../discovery/oryn-project-config";
 
 import { execCommand } from "../../exec/exec";
 import { getCodingAgentApi } from "../host-api";
@@ -99,6 +100,13 @@ export async function discoverCustomCommands(
 	};
 
 	const commandDirs: Array<{ path: string; source: CustomCommandSource }> = [];
+	// Oryn 项目层 `<root>/.omp/commands` 排最前；同名命令目录屏蔽全局与仓库版本，后者不再导入。
+	const orynRoot = orynProjectConfigRoot();
+	const orynCommandsDir = orynRoot ? path.join(getProjectAgentDir(orynRoot), "commands") : undefined;
+	const orynCommandNames = new Set<string>();
+	if (orynCommandsDir && fs.existsSync(orynCommandsDir)) {
+		commandDirs.push({ path: orynCommandsDir, source: "project" });
+	}
 	if (agentDir) {
 		const userCommandsDir = path.join(agentDir, "commands");
 		if (fs.existsSync(userCommandsDir)) {
@@ -126,12 +134,14 @@ export async function discoverCustomCommands(
 		}
 		for (const entry of entries) {
 			if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+			if (commandsDir !== orynCommandsDir && orynCommandNames.has(entry.name)) continue;
 			const commandDir = path.join(commandsDir, entry.name);
 
 			for (const filename of indexCandidates) {
 				const candidate = path.join(commandDir, filename);
 				if (fs.existsSync(candidate)) {
 					addPath(candidate, source);
+					if (commandsDir === orynCommandsDir) orynCommandNames.add(entry.name);
 					break;
 				}
 			}
