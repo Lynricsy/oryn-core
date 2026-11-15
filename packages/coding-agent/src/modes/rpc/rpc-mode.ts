@@ -2055,6 +2055,11 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 		session,
 		output,
 		onError: err => output(error(undefined, "loop", err.message)),
+		// Oryn：与 TUI `submitInteractiveInput` 一致，每轮重走 skill 派发，非 skill 才作普通 prompt。
+		submit: async text => {
+			if (!(await tryRunRpcSkillCommand(session, text, "followUp")))
+				await session.prompt(text, { streamingBehavior: "followUp" });
+		},
 	});
 
 	// Shutdown request flag (wrapped in object to allow mutation with const)

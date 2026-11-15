@@ -129,6 +129,24 @@ function userTexts(messages: AgentMessage[]): string[] {
 	});
 }
 
+/** 发给模型的消息形状：user 取正文，custom 取 customType，其余只记角色。 */
+function messageShapes(messages: AgentMessage[]): string[] {
+	return messages.map(message => {
+		if (message.role === "user") return `user:${userTexts([message]).join("")}`;
+		if (message.role === "custom") return `custom:${message.customType}`;
+		return message.role;
+	});
+}
+
+/** 等 loop 关闭（次数耗尽），再取当前会话的消息形状。 */
+async function shapesAfterLoopOff(client: FixtureRpc): Promise<string[]> {
+	await client.waitFor(
+		frame => frame.type === "loop_mode_update" && (frame.state as RpcLoopModeState).state === "off",
+	);
+	const { messages } = await client.data<{ messages: AgentMessage[] }>({ type: "get_messages" });
+	return messageShapes(messages);
+}
+
 describe("loop mode over RPC", () => {
 	test("the next idle prompt after enabling becomes the loop prompt and re-runs", async () => {
 		const client = await start();
@@ -154,7 +172,7 @@ describe("loop mode over RPC", () => {
 		expect(userTexts(messages)).toEqual(["say hi", "say hi"]);
 	}, 60_000);
 
-	test("a skill command sent in loop mode becomes the loop prompt", async () => {
+	test("a skill command sent in loop mode becomes the loop prompt and every iteration re-runs the skill", async () => {
 		const client = await start();
 		await client.data({ type: "set_loop_mode", enabled: true, args: "1" });
 		await client.data({ type: "prompt", message: "/skill:hello" });
@@ -164,10 +182,51 @@ describe("loop mode over RPC", () => {
 				(frame.state as RpcLoopModeState).state === "running" &&
 				(frame.state as RpcLoopModeState).prompt === "/skill:hello",
 		);
-		// The re-run consumed the single allowed iteration, so the loop really cycled.
-		await client.waitFor(
-			frame => frame.type === "loop_mode_update" && (frame.state as RpcLoopModeState).state === "off",
-		);
+		// 第 2 轮必须重新走 skill 派发，而不是把 `/skill:hello` 当普通文本发给模型。
+		expect(await shapesAfterLoopOff(client)).toEqual([
+			"custom:skill-prompt",
+			"assistant",
+			"custom:skill-prompt",
+			"assistant",
+		]);
+	}, 60_000);
+
+	test("an inline skill prompt in set_loop_mode args runs the skill on every iteration", async () => {
+		const client = await start();
+		await client.data({ type: "set_loop_mode", enabled: true, args: "1 /skill:hello" });
+		expect(await shapesAfterLoopOff(client)).toEqual([
+			"custom:skill-prompt",
+			"assistant",
+			"custom:skill-prompt",
+			"assistant",
+		]);
+	}, 60_000);
+
+	test("loop.mode=reset re-runs the skill in the fresh session", async () => {
+		const client = await start({ ORYN_LOOP_MODE: "reset" });
+		await client.data({ type: "set_loop_mode", enabled: true, args: "1" });
+		await client.data({ type: "prompt", message: "/skill:hello" });
+		// reset 后的新会话里只有这一轮：skill 指令，不是字面 `/skill:hello`。
+		expect(await shapesAfterLoopOff(client)).toEqual(["custom:skill-prompt", "assistant"]);
+	}, 60_000);
+
+	test("a skill submitted while streaming becomes the loop prompt and the iteration re-runs the skill", async () => {
+		const client = await start({ ORYN_RPC_HOLD_FIRST_TURN: "1" });
+		await client.data({ type: "set_loop_mode", enabled: true, args: "1" });
+		await client.data({ type: "prompt", message: "say hi" });
+		// 首个模型回合被夹具挂住，此时提交的 skill 是流式中的引导消息。
+		await client.waitFor(frame => frame.type === "agent_start");
+		await client.data({ type: "prompt", message: "/skill:hello" });
+		expect((await client.data<RpcLoopModeState>({ type: "get_loop_mode" })).prompt).toBe("/skill:hello");
+		await client.data({ type: "prompt", message: "/oryntest-release" });
+		expect(await shapesAfterLoopOff(client)).toEqual([
+			"user:say hi",
+			"assistant",
+			"custom:skill-prompt",
+			"assistant",
+			"custom:skill-prompt",
+			"assistant",
+		]);
 	}, 60_000);
 });
 

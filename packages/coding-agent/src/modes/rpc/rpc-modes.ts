@@ -438,6 +438,8 @@ interface RpcLoopModeControllerDeps {
 	session: AgentSession;
 	output: (frame: RpcLoopModeUpdateFrame) => void;
 	onError: (error: Error) => void;
+	/** Oryn：每轮提交入口（对应 TUI `submitInteractiveInput`，skill 命令走 skill 派发）；缺省为 `session.prompt`。 */
+	submit?: (text: string) => Promise<unknown>;
 }
 
 /**
@@ -542,9 +544,8 @@ export class RpcLoopModeController {
 
 	#dispatchTurn(text: string): void {
 		const session = this.#deps.session;
-		void session
-			.prompt(text, { streamingBehavior: "followUp" })
-			.catch(error => this.#deps.onError(error instanceof Error ? error : new Error(String(error))));
+		const submit = this.#deps.submit ?? (prompt => session.prompt(prompt, { streamingBehavior: "followUp" }));
+		void submit(text).catch(error => this.#deps.onError(error instanceof Error ? error : new Error(String(error))));
 	}
 
 	#isAutoSubmitBlocked(): boolean {
