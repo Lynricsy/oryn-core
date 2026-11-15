@@ -25,6 +25,7 @@ import "./agents-md";
 import "./claude-md";
 import "./custom-context-files";
 import "./builtin";
+import "./oryn-project-config";
 import "./builtin-defaults";
 import "./claude";
 import "./claude-plugins";

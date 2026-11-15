@@ -27,6 +27,7 @@ import { findAllNearestProjectConfigDirs, getConfigDirs } from "../config";
 import { pluginUsesClaudeModelDialect } from "../discovery/agent-plugin-format";
 import { listClaudePluginRoots } from "../discovery/helpers";
 import { listOmpExtensionRoots } from "../discovery/omp-extension-roots";
+import { orynProjectAgentsDir } from "../discovery/oryn-project-config";
 import { loadBundledAgents, parseAgent } from "./agents";
 import type { AgentSource } from "@oh-my-pi/pi-tui/tools/task";
 import type { AgentDefinition } from "./types";
@@ -106,6 +107,8 @@ export async function discoverAgents(
 
 	const orderedDirs: AgentDirectory[] = [];
 	const project = projectDirs[0];
+	const orynAgents = orynProjectAgentsDir();
+	if (orynAgents) orderedDirs.push({ dir: orynAgents, source: "project" });
 	if (project) orderedDirs.push({ dir: project.path, source: "project" });
 	const user = userDirs[0];
 	if (user) orderedDirs.push({ dir: user.path, source: "user" });

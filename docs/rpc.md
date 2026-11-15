@@ -201,6 +201,15 @@ Other Oryn-only behavior on existing commands:
 - `omfg` mirrors the TUI panel: each panel status arrives as `setStatus` with key `omfg` (`"/omfg · Attempt 1/3 · generating…"`), the candidate rule as a `setWidget` (key `omfg`) whose first line is `TTSR rule — <validation state>` (`validating against this conversation…` / `matches this conversation` / `could not confirm a match in this conversation`), and confirm dialogs append the rule text to `message`. Both keys are cleared when the command ends.
 - `get_available_commands` entries declare `textModeExecutable` (false for TUI-only builtins); `get_active_tools` marks xd:// mounted entries with `mounted: true`.
 
+### Oryn: central config
+
+Oryn Core only; no wire change. orbd sets two environment variables on the agent process:
+
+- `ORYN_CENTRAL_CONFIG=1` — the orb's config is managed centrally by Oryn.
+- `ORYN_PROJECT_CONFIG_ROOT=<abs path>` — set only when the orb belongs to a project (in orbs: `$HOME/.oryn/project-config`). Provider `oryn-project` (priority 110, above native's 100) loads `<root>/.omp/` with native's own loaders and the `.omp/` layout (rules, skills, `mcp.json`, commands, prompts, hooks, tools, extensions, instructions, `SYSTEM.md`, `AGENTS.md`); same-named items win over the repo's `.omp/` and the global config, and `<root>/.omp/AGENTS.md` loads beside the repo's `AGENTS.md`. Subagents in `<root>/.omp/agents` win over the repo's `.omp/agents`. Settings are not read from here; orbd passes `<root>/.omp/config.yml` via `--config`. Items keep `_source.provider: "native"`, `level: "project"`. A relative or empty value is ignored.
+
+With `ORYN_CENTRAL_CONFIG=1`, the `omfg` save dialog (title `Save TTSR rule where?`, unchanged) offers exactly `This project (Oryn project config)`, `Global — all projects (Oryn central config)`, `Amend with feedback…` — or only the last two when `ORYN_PROJECT_CONFIG_ROOT` is unset. The project option saves to `<root>/.omp/rules/<name>.md` (`savedPath` `~/.oryn/project-config/.omp/rules/<name>.md`), the global option to `~/.omp/agent/rules/<name>.md`. Without the variable the upstream options `This project (.omp/rules)` / `Global — all projects (~/.omp/agent/rules)` are sent unchanged.
+
 ### Thinking
 
 - `{ id?, type: "set_thinking_level", level: ThinkingLevel }`

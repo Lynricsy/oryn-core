@@ -7,6 +7,7 @@ import { TtsrToolInspector } from "../../session/ttsr-outputs";
 import { shortenPath } from "@oh-my-pi/pi-tui/render/render-utils";
 import { OmfgPanelComponent, type OmfgPanelResult } from "@oh-my-pi/pi-tui/overlays/omfg-panel";
 import type { InteractiveModeContext } from "../types";
+import { orynOmfgProjectRulePath } from "../../discovery/oryn-project-config";
 import {
 	buildOmfgRuleForPath,
 	extractGeneratedRuleJson,
@@ -295,6 +296,8 @@ export class OmfgController {
 				level: "user",
 			};
 		}
+		const orynPath = orynOmfgProjectRulePath(ruleName);
+		if (orynPath) return { filePath: orynPath, level: "project" };
 		return {
 			filePath: path.join(this.ctx.sessionManager.getCwd(), CONFIG_DIR_NAME, "rules", `${ruleName}.md`),
 			level: "project",

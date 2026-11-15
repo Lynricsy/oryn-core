@@ -1,5 +1,6 @@
 import type { OmfgPanelComponent, OmfgPanelResult } from "@oh-my-pi/pi-tui/overlays/omfg-panel";
 import type { ExtensionUIContext } from "../../extensibility/extensions";
+import { orynCentralConfigEnabled, orynProjectConfigRoot } from "../../discovery/oryn-project-config";
 import type { AgentSession } from "../../session/agent-session";
 import { OmfgController } from "../controllers/omfg-controller";
 import type { InteractiveModeContext } from "../types";
@@ -62,6 +63,34 @@ function createRpcOmfgPanelMirror(ui: ExtensionUIContext) {
 	};
 }
 
+/** Oryn 中央配置下 /omfg 保存位置的选项文案（契约 C2，Oryn 控制面与前端按字面量识别）。 */
+export const ORYN_OMFG_PROJECT_OPTION = "This project (Oryn project config)";
+export const ORYN_OMFG_GLOBAL_OPTION = "Global — all projects (Oryn central config)";
+const OMFG_SAVE_TITLE = "Save TTSR rule where?";
+
+/**
+ * Oryn：`ORYN_CENTRAL_CONFIG=1` 时把 /omfg 保存位置的上游选项换成 Oryn 文案，没有项目层
+ * （`ORYN_PROJECT_CONFIG_ROOT` 未设置）时去掉项目选项；用户选中的 Oryn 文案换回对应的上游原文
+ * 交给 OmfgController。其它对话框原样转发。
+ */
+export async function orynOmfgSelect(
+	ui: ExtensionUIContext,
+	title: string,
+	options: string[],
+): Promise<string | undefined> {
+	if (!orynCentralConfigEnabled() || title !== OMFG_SAVE_TITLE || options.length !== 3) {
+		return ui.select(title, options);
+	}
+	const [project, global, amend] = options;
+	const shown = orynProjectConfigRoot()
+		? [ORYN_OMFG_PROJECT_OPTION, ORYN_OMFG_GLOBAL_OPTION, amend]
+		: [ORYN_OMFG_GLOBAL_OPTION, amend];
+	const choice = await ui.select(title, shown);
+	if (choice === ORYN_OMFG_PROJECT_OPTION) return project;
+	if (choice === ORYN_OMFG_GLOBAL_OPTION) return global;
+	return choice;
+}
+
 /** Run the existing TTSR-rule workflow over RPC-hosted select/input/confirm dialogs. */
 export async function runRpcOmfg(
 	session: AgentSession,
@@ -83,7 +112,7 @@ export async function runRpcOmfg(
 			diagnostic = message;
 		},
 		showHookConfirm: (title: string, message: string) => ui.confirm(title, mirror.withRule(message)),
-		showHookSelector: (title: string, options: string[]) => ui.select(title, options),
+		showHookSelector: (title: string, options: string[]) => orynOmfgSelect(ui, title, options),
 		showHookInput: (title: string, placeholder?: string) => ui.input(title, placeholder),
 	} as unknown as InteractiveModeContext;
 	let result: OmfgPanelResult | undefined;
