@@ -5708,6 +5708,17 @@ pub struct CancelSubagentResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OrynCancelJobParams {
+	#[serde(rename = "jobId")]
+	pub job_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OrynCancelJobResult {
+	pub cancelled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SteerSubagentParams {
 	#[serde(rename = "subagentId")]
 	pub subagent_id: String,
@@ -7206,6 +7217,23 @@ impl Command for CancelSubagentCommand {
 
 	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
 		serde_json::from_value::<CancelSubagentResult>(data.unwrap_or_else(|| Value::Object(Map::new()))).map(|result| result.cancelled)
+	}
+}
+
+/// Oryn: cancel one running background job this session owns (`/jobs kill <id>`); false when there is none by that id.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OrynCancelJobCommand {
+	#[serde(rename = "jobId")]
+	pub job_id: String,
+}
+
+impl Command for OrynCancelJobCommand {
+	const NAME: &'static str = "oryn_cancel_job";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = bool;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<OrynCancelJobResult>(data.unwrap_or_else(|| Value::Object(Map::new()))).map(|result| result.cancelled)
 	}
 }
 

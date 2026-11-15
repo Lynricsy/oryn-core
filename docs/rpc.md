@@ -188,6 +188,19 @@ Oryn Core only. Both commands append a `custom` session entry with `customType: 
 
 How Oryn clients judge a turn's role from these records (and which later `model_change` entries invalidate them) is specified in Oryn's `docs/protocol.md`.
 
+### Oryn: UI-command parity
+
+- `{ id?, type: "oryn_cancel_job", jobId: string }`
+
+Oryn Core only. `oryn_cancel_job` is the structured `/jobs kill <id>`: it cancels one running background job the session owns and returns `{ cancelled }` — `false` for an unknown id, a settled job, or a job a subagent owns. An empty `jobId` fails with `"oryn_cancel_job requires a non-empty jobId"`; a session without a job registry fails with `"Async background jobs are unavailable in this session."`. `get_jobs` tree rows carry `cancellable: true` exactly when this command can cancel the row's job.
+
+Other Oryn-only behavior on existing commands:
+
+- Loop mode: while `set_loop_mode` is on, an idle `prompt` (after builtins; local extension commands and TUI-only builtins excepted) becomes the loop prompt, and so does a skill command whether or not the agent is streaming — as in the TUI. `steer` / `follow_up` never change it.
+- `set_plan_mode{enabled:true}` fails with `"Exit goal mode first."` while a goal is active or paused and `"Exit vibe mode first."` while vibe mode is on; disabling is always allowed.
+- `omfg` mirrors the TUI panel: each panel status arrives as `setStatus` with key `omfg` (`"/omfg · Attempt 1/3 · generating…"`), the candidate rule as a `setWidget` (key `omfg`) whose first line is `TTSR rule — <validation state>` (`validating against this conversation…` / `matches this conversation` / `could not confirm a match in this conversation`), and confirm dialogs append the rule text to `message`. Both keys are cleared when the command ends.
+- `get_available_commands` entries declare `textModeExecutable` (false for TUI-only builtins); `get_active_tools` marks xd:// mounted entries with `mounted: true`.
+
 ### Thinking
 
 - `{ id?, type: "set_thinking_level", level: ThinkingLevel }`

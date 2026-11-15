@@ -192,6 +192,13 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 		unwrap: "cancelled",
 	},
 	{
+		name: "oryn_cancel_job",
+		doc: "Oryn: cancel one running background job this session owns (`/jobs kill <id>`); false when there is none by that id.",
+		params: { jobId: "string" },
+		result: { cancelled: "boolean" },
+		unwrap: "cancelled",
+	},
+	{
 		name: "steer_subagent",
 		doc: "Send a message to a running subagent as its user.",
 		params: { subagentId: "string", message: "string" },

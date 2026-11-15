@@ -69,6 +69,7 @@ export function buildRpcActiveTools(session: AgentSession): RpcActiveToolsResult
 			name: mounted.name,
 			description: mounted.summary,
 			source: classifyToolSource(session, mounted.name),
+			mounted: true,
 		});
 	}
 	return { tools };
@@ -122,10 +123,17 @@ export function buildRpcJobs(session: AgentSession): RpcJobsResult {
 	const jobs = [...snapshot.running, ...snapshot.recent];
 	const tree = session.getAsyncJobTree({ includeResults: true });
 	if (!tree) return { jobs };
+	// Only this agent's running jobs are cancellable (`cancelAsyncJob` is owner-scoped, like `/jobs kill`).
+	const cancellable = new Set(snapshot.running.map(job => job.id));
 	const rows = buildJobTree([...tree.running, ...tree.recent], tree.agents, tree.rootId).map((row): RpcJobTreeRow =>
 		row.kind === "agent"
 			? { depth: row.depth, agentId: row.agent.id }
-			: { depth: row.depth, job: row.job, ...(row.agent ? { agentId: row.agent.id } : {}) },
+			: {
+					depth: row.depth,
+					job: row.job,
+					...(row.agent ? { agentId: row.agent.id } : {}),
+					...(row.job.status === "running" && cancellable.has(row.job.id) ? { cancellable: true as const } : {}),
+				},
 	);
 	return { jobs, tree: rows };
 }

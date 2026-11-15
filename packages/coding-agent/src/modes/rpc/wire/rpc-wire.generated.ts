@@ -1861,6 +1861,14 @@ export interface CancelSubagentResult {
 	cancelled: boolean;
 }
 
+export interface OrynCancelJobParams {
+	jobId: string;
+}
+
+export interface OrynCancelJobResult {
+	cancelled: boolean;
+}
+
 export interface SteerSubagentParams {
 	subagentId: string;
 	message: string;
@@ -2173,6 +2181,7 @@ export interface RpcWireCommands {
 	get_subagents: { params: undefined; result: GetSubagentsResult };
 	get_subagent_messages: { params: GetSubagentMessagesParams; result: SubagentMessages };
 	cancel_subagent: { params: CancelSubagentParams; result: CancelSubagentResult };
+	oryn_cancel_job: { params: OrynCancelJobParams; result: OrynCancelJobResult };
 	steer_subagent: { params: SteerSubagentParams; result: undefined };
 	live_start: { params: LiveStartParams; result: LiveStartResult };
 	live_connect: { params: LiveConnectParams; result: LiveConnectResult };

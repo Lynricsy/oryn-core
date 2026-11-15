@@ -95,8 +95,8 @@ describe("buildRpcActiveTools", () => {
 			{ name: "read", description: "Read files", source: "builtin" },
 			{ name: "mcp__docs_search", description: "Search docs", source: "mcp" },
 			{ name: "my_custom", description: "Custom tool", source: "extension" },
-			// xd:// mounts follow the active set, same source classification.
-			{ name: "mcp__db_query", description: "DB device", source: "mcp" },
+			// xd:// mounts follow the active set, same source classification, flagged as mounted (Oryn).
+			{ name: "mcp__db_query", description: "DB device", source: "mcp", mounted: true },
 		]);
 	});
 });
@@ -150,10 +150,11 @@ describe("buildRpcJobs", () => {
 			getAsyncJobTree: () => ({ running: [own, task, child], recent: [], agents: [{ id: "0-Scout" }] }),
 		} as unknown as AgentSession;
 
+		// Oryn: only the viewing agent's running jobs (the owner-scoped snapshot) are cancellable.
 		expect(buildRpcJobs(session).tree).toEqual([
-			{ depth: 0, job: task, agentId: "0-Scout" },
+			{ depth: 0, job: task, agentId: "0-Scout", cancellable: true },
 			{ depth: 1, job: child },
-			{ depth: 0, job: own },
+			{ depth: 0, job: own, cancellable: true },
 		]);
 	});
 

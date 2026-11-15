@@ -8074,6 +8074,25 @@ func (v *CancelSubagentResult) decodeFrom(raw map[string]json.RawMessage) error 
 	return nil
 }
 
+type OrynCancelJobResult struct {
+	Cancelled bool `json:"cancelled"`
+}
+
+func (v *OrynCancelJobResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "OrynCancelJobResult", v.decodeFrom)
+}
+
+func (v *OrynCancelJobResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out OrynCancelJobResult
+	d := fieldDecoder{raw: raw, owner: "OrynCancelJobResult"}
+	d.required("cancelled", &out.Cancelled)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
 type LiveStartResult struct {
 	Voice string `json:"voice"`
 }
@@ -8905,6 +8924,18 @@ type CancelSubagentCommand struct {
 func (c Commands) CancelSubagent(ctx context.Context, p CancelSubagentCommand) (bool, error) {
 	var out CancelSubagentResult
 	err := c.call(ctx, "cancel_subagent", p, 0, &out)
+	return out.Cancelled, err
+}
+
+// OrynCancelJobCommand holds the parameters of "oryn_cancel_job".
+type OrynCancelJobCommand struct {
+	JobID string `json:"jobId"`
+}
+
+// OrynCancelJob sends "oryn_cancel_job": Oryn: cancel one running background job this session owns (`/jobs kill <id>`); false when there is none by that id.
+func (c Commands) OrynCancelJob(ctx context.Context, p OrynCancelJobCommand) (bool, error) {
+	var out OrynCancelJobResult
+	err := c.call(ctx, "oryn_cancel_job", p, 0, &out)
 	return out.Cancelled, err
 }
 

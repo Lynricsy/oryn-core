@@ -73,6 +73,7 @@ import type { RpcBrowserHostInfo } from "./rpc-browser-host";
 import type { RpcGoalOp, RpcGoalResult } from "./rpc-goal";
 import type { RpcMessagesPage } from "./rpc-messages";
 import type { OrynRpcCommand, OrynRpcResponse } from "./oryn-model-source";
+import type { OrynUiParityRpcCommand, OrynUiParityRpcResponse } from "./oryn-ui-parity";
 
 // ============================================================================
 // RPC Commands (stdin)
@@ -710,7 +711,8 @@ export type RpcCommand =
 	| { id?: string; type: "btw_cancel"; recordId?: string }
 	| { id?: string; type: "btw_inject"; recordId: string }
 	| { id?: string; type: "get_btw_history" }
-	| OrynRpcCommand;
+	| OrynRpcCommand
+	| OrynUiParityRpcCommand;
 
 // ============================================================================
 // RPC State
@@ -808,6 +810,8 @@ export interface RpcAvailableSlashCommand {
 	allowArgs?: boolean;
 	/** Whether dynamic candidates exist (get_command_arg_completions); static-only commands never need the round trip. */
 	hasDynamicArgCompletion?: boolean;
+	/** False for builtins that only the TUI can run; sent as text over RPC they reach the model as a plain prompt. */
+	textModeExecutable?: boolean;
 }
 
 /** Result of switch_leaf (session.navigateTree passthrough + the leaf after the move). */
@@ -2283,6 +2287,8 @@ export interface RpcActiveTool {
 	name: string;
 	description?: string;
 	source: RpcToolSource;
+	/** Set on xd:// mounted entries (the `~ xd://name` rows), absent on top-level tools. */
+	mounted?: true;
 }
 
 /**
@@ -2319,6 +2325,8 @@ export interface RpcJobTreeRow {
 	job?: AsyncJobSnapshotItem;
 	/** Registry id of the subagent this row heads. */
 	agentId?: string;
+	/** Set when `oryn_cancel_job` can cancel this row's job: running and owned by the viewing agent. */
+	cancellable?: true;
 }
 
 /**
@@ -3809,6 +3817,7 @@ export type RpcResponse =
 			data: { records: readonly RpcBtwHistoryRecord[] };
 	  }
 	| OrynRpcResponse
+	| OrynUiParityRpcResponse
 
 	// Error response (any command can fail); `code` is an optional machine-readable reason.
 	| {

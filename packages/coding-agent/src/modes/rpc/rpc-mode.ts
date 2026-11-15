@@ -236,6 +236,7 @@ import { RpcSubagentRegistry, readRpcSubagentTranscript, resolveOwnedLiveSubagen
 import { startRpcTan } from "./rpc-tan";
 import { type HostedComponentFactory, showHostedComponent } from "./rpc-custom-ui";
 import { handleOrynMarkSessionStart, handleOrynSelectModel } from "./oryn-model-source";
+import { handleOrynCancelJob, isOrynLoopPromptCandidate, orynPlanModeConflict } from "./oryn-ui-parity";
 import type {
 	RpcAbortAndRestoreQueueResult,
 	RpcAvailableModelsResult,
@@ -2627,6 +2628,8 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 			}
 			if (command.type === "prompt") {
 				if (!ticket) return "cancelled";
+				// Oryn: TUI records a skill submitted in loop mode as the loop prompt, streaming or not.
+				if (resolveRpcSkillInvocation(session, text)) loopModeController.onHostPrompt(text);
 				const skillResult = await dispatchRpcSkillPrompt({
 					ticket,
 					session,
@@ -2707,6 +2710,9 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				}
 			}
 			if (!isCurrent() || !ticket) return "cancelled";
+			// Oryn: an idle user prompt in loop mode becomes the loop prompt (TUI parity).
+			if (command.type === "prompt" && isOrynLoopPromptCandidate(session, text))
+				loopModeController.onHostPrompt(text);
 			await watchAndReportPromptResult({
 				ticket,
 				startPrompt: onPromptAdmitted =>
@@ -4783,6 +4789,8 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 						"mode_unavailable_in_chat",
 					);
 				}
+				const planConflict = command.enabled ? orynPlanModeConflict(session) : undefined;
+				if (planConflict) return error(id, "set_plan_mode", planConflict);
 				if (command.enabled) {
 					session.setPlanModeState({
 						enabled: true,
@@ -5147,6 +5155,14 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 
 			case "get_jobs": {
 				return success(id, "get_jobs", buildRpcJobs(session));
+			}
+
+			case "oryn_cancel_job": {
+				try {
+					return success(id, "oryn_cancel_job", handleOrynCancelJob(session, command));
+				} catch (err) {
+					return error(id, "oryn_cancel_job", err instanceof Error ? err.message : String(err));
+				}
 			}
 
 			// =================================================================

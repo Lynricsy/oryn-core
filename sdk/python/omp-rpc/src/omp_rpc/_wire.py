@@ -3900,6 +3900,12 @@ class WireClient:
         params["subagentId"] = subagent_id
         return required(expect_object(self._command("cancel_subagent", params), "cancel_subagent"), "cancelled", decode_bool, "cancel_subagent")
 
+    def oryn_cancel_job(self, job_id: str) -> bool:
+        """Oryn: cancel one running background job this session owns (`/jobs kill <id>`); false when there is none by that id."""
+        params: dict[str, object] = {}
+        params["jobId"] = job_id
+        return required(expect_object(self._command("oryn_cancel_job", params), "oryn_cancel_job"), "cancelled", decode_bool, "oryn_cancel_job")
+
     def steer_subagent(self, subagent_id: str, message: str) -> None:
         """Send a message to a running subagent as its user."""
         params: dict[str, object] = {}
