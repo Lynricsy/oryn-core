@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- RPC hosts can remove a global settings override again, restoring the value from the remaining configuration layers.
 - Custom compiled distributions can include their HTML session viewer so exports open without an upstream-hosted viewer release.
 
 ## [18.21.0] - 2026-11-16

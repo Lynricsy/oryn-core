@@ -4707,8 +4707,11 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				const setting = lookupSetting(command.path);
 				if (!setting) return error(id, "set_setting", `Unknown setting path: ${command.path}`);
 				try {
-					validateRpcSettingValue(command.path, command.value);
-					setting.set(session.settings, command.value as never);
+					if (command.value === undefined) setting.unset(session.settings);
+					else {
+						validateRpcSettingValue(command.path, command.value);
+						setting.set(session.settings, command.value as never);
+					}
 					await session.settings.flush();
 					const effectiveValue = setting.get(session.settings);
 					const advisorEnabled = command.path === "advisor.enabled" ? session.isAdvisorEnabled() : undefined;
