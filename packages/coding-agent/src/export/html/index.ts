@@ -19,7 +19,7 @@ export { type ExportThemeNames, parseExportArgs } from "./args";
 let cachedTemplate: string | undefined;
 const SESSION_DATA_MARKER = "{{SESSION_DATA}}";
 
-/** Create an export document with a checkout viewer or an integrity-pinned release viewer. */
+/** Create an export document with an embedded, checkout, or integrity-pinned release viewer. */
 export function getTemplate(): string {
 	if (cachedTemplate) return cachedTemplate;
 	const sourceCheckout =
@@ -28,9 +28,9 @@ export function getTemplate(): string {
 		!import.meta.dir.split(/[\\/]/).includes("node_modules") &&
 		fs.existsSync(path.join(import.meta.dir, "shell.html"));
 	let viewerScript: string;
-	if (sourceCheckout) {
+	let viewer = process.env.PI_EXPORT_VIEWER_EMBED;
+	if (!viewer && sourceCheckout) {
 		const viewerPath = path.resolve(import.meta.dir, "../../../export-assets", viewerAsset.file);
-		let viewer: string;
 		try {
 			viewer = fs.readFileSync(viewerPath, "utf8");
 		} catch (err) {
@@ -41,6 +41,8 @@ export function getTemplate(): string {
 			}
 			throw err;
 		}
+	}
+	if (viewer) {
 		// Inline classic scripts run before deferred external scripts. Wait for
 		// both shared libraries, and prevent embedded text from closing the tag.
 		const escaped = viewer.replace(/<\/script/gi, match => `<\\/${match.slice(2)}`);

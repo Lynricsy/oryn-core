@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Custom compiled distributions can include their HTML session viewer so exports open without an upstream-hosted viewer release.
+
 ## [18.21.0] - 2026-11-16
 
 ### Breaking Changes
