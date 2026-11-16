@@ -6,6 +6,12 @@
 
 - Fixed Gemini rejecting every request in a session with `enum[0]: cannot be empty` when any tool offered an empty string as a choice ([#46](https://github.com/nornzach/oh-my-pi-gui/issues/46))
 ### Changed
+## [18.21.0] - 2026-11-16
+
+### Added
+
+- Added automatic detection of thinking capabilities for previously unknown models, with persistent results and support for alternate effort and token-budget request formats.
+
 ## [18.20.3] - 2026-11-16
 
 ### Breaking Changes

@@ -129,6 +129,33 @@ describe("focused subagent view slash commands", () => {
 		expect(prompt).not.toHaveBeenCalled();
 	});
 
+	it("sends a plain draft to the focused /btw topic before the focused agent", async () => {
+		const focused = createFocusedContext();
+		const submitBtwFollowUp = vi.fn(async () => true);
+		Object.assign(focused.raw, { isBtwFocused: true, submitBtwFollowUp });
+		const controller = new InputController(focused.ctx);
+		controller.setupEditorSubmitHandler();
+		await focused.ctx.editor.onSubmit?.("explain the approach");
+
+		expect(submitBtwFollowUp).toHaveBeenCalledWith("explain the approach", undefined);
+		expect(focused.prompt).not.toHaveBeenCalled();
+	});
+
+	it("keeps explicit queue shorthand on the agent's follow-up lane while /btw is focused", async () => {
+		const focused = createFocusedContext();
+		const submitBtwFollowUp = vi.fn(async () => true);
+		Object.assign(focused.raw, { isBtwFocused: true, submitBtwFollowUp });
+		const controller = new InputController(focused.ctx);
+		controller.setupEditorSubmitHandler();
+		await focused.ctx.editor.onSubmit?.("=> check the result");
+
+		expect(focused.prompt).toHaveBeenCalledWith("check the result", {
+			streamingBehavior: "followUp",
+			images: undefined,
+		});
+		expect(submitBtwFollowUp).not.toHaveBeenCalled();
+	});
+
 	it("copies the focused agent's last code block with /copy code instead of steering the agent", async () => {
 		const copySpy = spyOn(clipboard, "copyToClipboard").mockResolvedValue(undefined);
 		const codeMessage = (code: string) =>

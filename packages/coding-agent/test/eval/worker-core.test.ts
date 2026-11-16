@@ -11,7 +11,7 @@ import type {
 	WorkerInbound,
 	WorkerOutbound,
 } from "@oh-my-pi/pi-coding-agent/eval/js/worker-protocol";
-import { postmortem } from "@oh-my-pi/pi-utils";
+import { postmortem, TempDir } from "@oh-my-pi/pi-utils";
 
 interface WorkerHarness {
 	send(message: WorkerInbound): void;
@@ -160,8 +160,8 @@ for (const runId of ["third", "fourth"]) {
 core.dispose();
 console.log(JSON.stringify(messages));
 `;
-		await using dir = await fs.mkdtempDisposable(path.join(os.tmpdir(), "omp-late-rejection-"));
-		const probePath = path.join(dir.path, "probe.ts");
+		await using dir = await TempDir.create("@omp-late-rejection-");
+		const probePath = dir.join("probe.ts");
 		await Bun.write(probePath, probe);
 		const proc = Bun.spawn([process.execPath, probePath], {
 			cwd: process.cwd(),
