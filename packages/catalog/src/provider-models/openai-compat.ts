@@ -59,6 +59,7 @@ import {
 	mergeCopilotApiHeaders,
 	parseGitHubCopilotApiKey,
 } from "../wire/github-copilot";
+import { normalizeModalBaseUrl } from "../wire/modal";
 import {
 	SINGULARITYAPI_DEV_API_BASE_URL,
 	SINGULARITYAPI_TECH_API_BASE_URL,
@@ -3636,10 +3637,13 @@ export function openrouterModelManagerOptions(config?: OpenRouterModelManagerCon
 	const references = createBundledReferenceMap<"openrouter">("openrouter");
 	return {
 		providerId: "openrouter",
-		// Older builds cached OpenRouter discovery rows as `api: "openai-completions"`.
-		// Namespace the refreshed pseudo-API cache separately so those rows cannot
-		// override bundled `api: "openrouter"` models during online-if-uncached startup.
-		cacheProviderId: resolveModelCacheProviderId("openrouter"),
+		// Older builds cached OpenRouter discovery rows as `api: "openai-completions"`;
+		// the pseudo-API namespace keeps them from overriding bundled `api: "openrouter"`
+		// models. It is also scoped by key: the keyed roster is guardrail-filtered.
+		cacheProviderId: resolveModelCacheProviderId("openrouter", { apiKey, baseUrl }),
+		// With a key, `/models` lists only the models the key's workspace guardrails
+		// allow; bundled rows from the public roster must not widen that set.
+		dynamicModelsAuthoritative: true,
 		fetchDynamicModels: async () => {
 			const [chatModels, imageModels, decisionModels, rerankModels, videoModels, embeddingModels] =
 				await Promise.all([
@@ -3838,12 +3842,12 @@ export function openrouterModelManagerOptions(config?: OpenRouterModelManagerCon
 				]);
 
 			if (imageModels === null) {
-				logger.warn("OpenRouter image model discovery unavailable; preserving chat model discovery", {
+				logger.warn("OpenRouter image model discovery unavailable; preserving other model discovery", {
 					endpoint: `${baseUrl}/images/models`,
 				});
 			}
 			if (decisionModels === null) {
-				logger.warn("OpenRouter decision model discovery unavailable; preserving chat model discovery", {
+				logger.warn("OpenRouter decision model discovery unavailable; preserving other model discovery", {
 					endpoint: `${baseUrl}/models?output_modalities=decisions`,
 				});
 			}
@@ -3862,19 +3866,19 @@ export function openrouterModelManagerOptions(config?: OpenRouterModelManagerCon
 					endpoint: `${baseUrl}/embeddings/models`,
 				});
 			}
-			if (
-				chatModels === null &&
-				imageModels === null &&
-				decisionModels === null &&
-				rerankModels === null &&
-				videoModels === null &&
-				embeddingModels === null
-			) {
+			// Discovery is authoritative for chat rows: a successful result replaces
+			// the bundled chat roster. Without the chat listing there is no roster to
+			// replace it with, so fall back to cache/bundled rows instead of pruning
+			// every chat model on the strength of a media-only response.
+			if (chatModels === null) {
+				logger.warn("OpenRouter chat model discovery unavailable; keeping cached model catalog", {
+					endpoint: `${baseUrl}/models`,
+				});
 				return null;
 			}
 
 			const models = new Map<string, ModelSpec<Api>>();
-			for (const model of chatModels ?? []) models.set(model.id, model);
+			for (const model of chatModels) models.set(model.id, model);
 			for (const model of imageModels ?? []) models.set(model.id, model);
 			for (const model of decisionModels ?? []) models.set(model.id, model);
 			for (const model of rerankModels ?? []) models.set(model.id, model);
@@ -8447,6 +8451,126 @@ export function otariModelManagerOptions(config?: OtariModelManagerConfig): Mode
 							},
 							contextWindow: toPositiveNumber(entry.context_window, defaults.contextWindow),
 							maxTokens: toPositiveNumber(entry.max_output_tokens, defaults.maxTokens),
+						};
+					},
+					fetch: config?.fetch,
+				}),
+		}),
+	};
+}
+
+// ---------------------------------------------------------------------------
+// 25. Modal
+// ---------------------------------------------------------------------------
+
+/**
+ * Modal discovery configuration: the proxy token plus optional base-URL and
+ * fetch overrides. Consumed by {@link modalModelManagerOptions}.
+ */
+export interface ModalModelManagerConfig {
+	apiKey?: string;
+	baseUrl?: string;
+	fetch?: FetchImpl;
+}
+
+const MODAL_EFFORT_VALUES: Readonly<Record<string, Effort>> = {
+	minimal: Effort.Minimal,
+	low: Effort.Low,
+	medium: Effort.Medium,
+	high: Effort.High,
+	xhigh: Effort.XHigh,
+	max: Effort.Max,
+};
+
+/**
+ * `/v1/models` rows carry `reasoning_options: [{type: "effort", values}]` per
+ * endpoint. `none` is the wire's off value, not an Effort tier; endpoints that
+ * omit it run thinking always-on.
+ */
+function modalThinkingConfig(entry: OpenAICompatibleModelRecord): ThinkingConfig | undefined {
+	if (!Array.isArray(entry.reasoning_options)) return undefined;
+	for (const option of entry.reasoning_options) {
+		if (!isRecord(option) || option.type !== "effort" || !Array.isArray(option.values)) continue;
+		const efforts = option.values
+			.filter((value): value is string => typeof value === "string" && value in MODAL_EFFORT_VALUES)
+			.map(value => MODAL_EFFORT_VALUES[value]);
+		if (efforts.length === 0) continue;
+		const thinking: ThinkingConfig = { mode: "effort", efforts };
+		if (!option.values.includes("none")) thinking.requiresEffort = true;
+		return thinking;
+	}
+	return undefined;
+}
+
+/**
+ * Modal model manager: the deployment's `/v1/models` roster is the whole
+ * catalog, so nothing is bundled and every field comes from the row. Rows
+ * carry `context_length`, `max_output_length`, `input_modalities`,
+ * `supported_features` (`tools`, `reasoning`, …) and the effort ladder in
+ * `reasoning_options`; the gateway prices nothing, so costs stay unknown.
+ * Discovery runs only with a proxy token: the shared gateway rejects
+ * unauthenticated requests, and requests to a dedicated endpoint
+ * (`MODAL_BASE_URL`) carry the same token.
+ */
+export function modalModelManagerOptions(config?: ModalModelManagerConfig): ModelManagerOptions<"openai-completions"> {
+	const apiKey = config?.apiKey;
+	const baseUrl = normalizeModalBaseUrl(config?.baseUrl ?? Bun.env.MODAL_BASE_URL);
+	return {
+		providerId: "modal",
+		cacheProviderId: resolveModelCacheProviderId("modal", { apiKey, baseUrl }),
+		dynamicModelsAuthoritative: true,
+		...(apiKey && {
+			fetchDynamicModels: () =>
+				fetchOpenAICompatibleModels({
+					api: "openai-completions",
+					provider: "modal",
+					baseUrl,
+					apiKey,
+					filterModel: (entry, model) => {
+						// `output_modalities` without `text` is not a chat model;
+						// `input_modalities` without `text` cannot accept chat input.
+						if (Array.isArray(entry.output_modalities) && !entry.output_modalities.includes("text")) return false;
+						if (Array.isArray(entry.input_modalities) && !entry.input_modalities.includes("text")) return false;
+						return !isExcludedModel("modal", model.id);
+					},
+					mapModel: (entry, defaults) => {
+						const features = Array.isArray(entry.supported_features) ? entry.supported_features : undefined;
+						const thinking = modalThinkingConfig(entry);
+						// Endpoint ids are deployment slugs, so the row's `interleaved.field`
+						// carries what policy resolution cannot infer: the reasoning replay
+						// field. Interleaved thinking must round-trip on assistant
+						// tool-call turns.
+						const reasoningContentField =
+							isRecord(entry.interleaved) &&
+							(entry.interleaved.field === "reasoning_content" ||
+								entry.interleaved.field === "reasoning" ||
+								entry.interleaved.field === "reasoning_text")
+								? entry.interleaved.field
+								: undefined;
+						const compat: OpenAICompat = {};
+						if (reasoningContentField !== undefined) {
+							compat.reasoningContentField = reasoningContentField;
+							compat.requiresReasoningContentForToolCalls = true;
+						}
+						// `requiresEffort` is set exactly when the advertised ladder omits
+						// `none`; its presence means `reasoning_effort: "none"` is a real
+						// off switch on the wire.
+						if (thinking !== undefined && thinking.requiresEffort !== true) {
+							compat.reasoningDisableMode = "none-effort";
+						}
+						return {
+							...defaults,
+							...(Object.keys(compat).length > 0 && { compat }),
+							name: toModelName(entry.name, defaults.name),
+							reasoning: thinking !== undefined || (features?.includes("reasoning") ?? false),
+							...(thinking ? { thinking } : {}),
+							// An explicitly empty feature list means no tool calling; an
+							// absent field leaves the default.
+							...(features !== undefined && !features.includes("tools") ? { supportsTools: false } : {}),
+							input: toInputCapabilities(entry.input_modalities),
+							pricingStatus: "unknown",
+							contextWindow: toPositiveNumber(entry.context_length, defaults.contextWindow),
+							maxTokens: toPositiveNumber(entry.max_output_length, defaults.maxTokens),
 						};
 					},
 					fetch: config?.fetch,

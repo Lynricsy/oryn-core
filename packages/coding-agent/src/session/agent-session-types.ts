@@ -679,6 +679,9 @@ export interface SessionQueuedMessage extends RestoredQueuedMessage {
 	timestamp: number;
 }
 
+/** A queued message the dequeue key took back, tagged with the queue it left so the editor can restore its delivery. */
+export type DequeuedMessage = RestoredQueuedMessage & { queue: "steering" | "followUp" };
+
 /** Options for the same ephemeral side turn used by /btw. */
 export interface EphemeralTurnOptions {
 	promptText: string;
