@@ -25,6 +25,7 @@ import * as vcs from "@oh-my-pi/pi-natives/vcs";
 import { logger } from "@oh-my-pi/pi-utils";
 import type { HindsightClientApi } from "./client";
 import type { HindsightConfig } from "./config";
+import { orynProjectLabel } from "./oryn-project";
 
 const DEFAULT_BANK_NAME = "omp";
 const PROJECT_TAG_PREFIX = "project:";
@@ -81,6 +82,8 @@ function baseBankId(config: HindsightConfig): string {
  * Native repository discovery never launches a subprocess.
  */
 function projectLabel(directory: string): string {
+	const oryn = orynProjectLabel();
+	if (oryn) return oryn;
 	if (!directory) return UNKNOWN_PROJECT;
 	const primary = vcs.repo(directory)?.primaryRoot() ?? null;
 	return path.basename(primary ?? directory).toLowerCase() || UNKNOWN_PROJECT;
