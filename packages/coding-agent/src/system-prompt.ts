@@ -69,6 +69,7 @@ import {
 	cfgSystemPromptTemplates,
 } from "./session/settings";
 import { cfgOvnfsPath, cfgTaskBatch, cfgTaskEager } from "./task/settings";
+import { cfgBrowserCdpUrl, cfgBrowserRelayUrl } from "./tools/browser/settings";
 import {
 	cfgAsyncEnabled,
 	cfgOutEnabled,
@@ -107,6 +108,9 @@ export const cfgSystemPromptInputs = combine({
 	asyncEnabled: cfgAsyncEnabled,
 	bashAutoBackground: cfgBashAutoBackgroundEnabled,
 	evalAutoBackground: cfgEvalAutoBackgroundEnabled,
+	// Browser endpoint changes can enable pre-call platform safety guidance.
+	browserCdpUrl: cfgBrowserCdpUrl,
+	browserRelayUrl: cfgBrowserRelayUrl,
 	taskEager: cfgTaskEager,
 	taskBatch: cfgTaskBatch,
 	// Separate-checkout guidance names the ovnfs command.

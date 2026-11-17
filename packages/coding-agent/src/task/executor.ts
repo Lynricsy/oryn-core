@@ -515,12 +515,10 @@ export interface ExecutorOptions {
 	/** Caller's description of how open-ended the work is; rides the initial prompt into the child's `auto` thinking classifier. */
 	solutionSpace?: string;
 	/**
-	 * `false` = the child has no `yield` tool and its final assistant message is
-	 * the result (`task.structured` off); callers then supply no {@link outputSchema}.
-	 * Default `true`.
+	 * Schema used to validate the final structured completion. Its presence is
+	 * what gives the child a `yield` tool (see {@link usesYield}); without one the
+	 * child's final assistant message is the result.
 	 */
-	structured?: boolean;
-	/** Schema used to validate the final structured completion. */
 	outputSchema?: unknown;
 	/** Enforcement policy for {@link outputSchema}; defaults to legacy permissive behavior. */
 	outputSchemaMode?: StructuredSubagentSchemaMode;
@@ -739,9 +737,6 @@ interface FinalizeSubprocessOutputArgs {
 	outputSchema: unknown;
 	outputSchemaMode?: StructuredSubagentSchemaMode;
 	outputSchemaSource?: StructuredSubagentSchemaSource;
-	lastAssistantText?: string;
-	/** `false` = no `yield` tool: `rawOutput` is the final assistant message, returned verbatim. Default `true`. */
-	structured?: boolean;
 }
 
 interface FinalizeSubprocessOutputResult {
@@ -758,6 +753,15 @@ export const SUBAGENT_WARNING_NULL_YIELD = "SYSTEM WARNING: Subagent called yiel
 export const SUBAGENT_WARNING_MISSING_YIELD =
 	"SYSTEM WARNING: Subagent exited without calling yield tool after 3 reminders.";
 export const SUBAGENT_WARNING_EMPTY_MESSAGE = "SYSTEM WARNING: Subagent ended without a final message.";
+
+/**
+ * Whether a run returns its result through `yield`. Only a schema-bound result
+ * needs the tool; without an output schema the child has no `yield` and its
+ * final assistant message is the result, verbatim.
+ */
+export function usesYield(outputSchema: unknown): boolean {
+	return outputSchema !== undefined;
+}
 
 /** Build a schema_violation outcome — surfaced as a non-zero exit so callers treat it as a failure. */
 function buildSchemaViolationOutcome(
@@ -786,7 +790,7 @@ function buildSchemaViolationOutcome(
 
 export function finalizeSubprocessOutput(args: FinalizeSubprocessOutputArgs): FinalizeSubprocessOutputResult {
 	let { rawOutput, exitCode, stderr } = args;
-	const { yieldItems, doneAborted, signalAborted, outputSchema, lastAssistantText } = args;
+	const { yieldItems, doneAborted, signalAborted, outputSchema } = args;
 	const mode = args.outputSchemaMode ?? "permissive";
 	const source = args.outputSchemaSource ?? (outputSchema === undefined ? "none" : "session");
 	const includeStructuredOutput = source !== "none";
@@ -807,7 +811,7 @@ export function finalizeSubprocessOutput(args: FinalizeSubprocessOutputArgs): Fi
 				rawOutput = `{"aborted":true,"error":"${lastYield.error || "Unknown error"}"}`;
 			}
 		} else {
-			const assembled = assembleYieldResult(yieldItems, lastAssistantText, yieldSectionShapes(outputSchema));
+			const assembled = assembleYieldResult(yieldItems, yieldSectionShapes(outputSchema));
 			if (!assembled || assembled.missingData) {
 				rawOutput = rawOutput ? `${SUBAGENT_WARNING_NULL_YIELD}\n\n${rawOutput}` : SUBAGENT_WARNING_NULL_YIELD;
 				if (includeStructuredOutput) {
@@ -837,7 +841,7 @@ export function finalizeSubprocessOutput(args: FinalizeSubprocessOutputArgs): Fi
 				}
 			} else {
 				const { validator, error: schemaError, normalized } = buildOutputValidator(outputSchema);
-				const submittedData = assembled.rawText ? assembled.data : parseStringifiedJson(assembled.data ?? null);
+				const submittedData = parseStringifiedJson(assembled.data ?? null);
 				const completeData =
 					mode === "strict" ? (validator?.normalize(submittedData) ?? submittedData) : submittedData;
 				const validation = validator?.validate(completeData);
@@ -884,10 +888,7 @@ export function finalizeSubprocessOutput(args: FinalizeSubprocessOutputArgs): Fi
 					exitCode = outcome.exitCode;
 				} else {
 					try {
-						rawOutput =
-							assembled.rawText && typeof completeData === "string"
-								? completeData
-								: (JSON.stringify(completeData, null, 2) ?? "null");
+						rawOutput = JSON.stringify(completeData, null, 2) ?? "null";
 					} catch (err) {
 						const errorMessage = err instanceof Error ? err.message : String(err);
 						rawOutput = `{"error":"Failed to serialize yield data: ${errorMessage}"}`;
@@ -903,7 +904,7 @@ export function finalizeSubprocessOutput(args: FinalizeSubprocessOutputArgs): Fi
 				}
 			}
 		}
-	} else if (args.structured === false) {
+	} else if (!usesYield(outputSchema)) {
 		// The final assistant message is the result verbatim; only an empty one fails.
 		if (exitCode === 0 && !rawOutput.trim()) {
 			rawOutput = SUBAGENT_WARNING_EMPTY_MESSAGE;
@@ -2680,9 +2681,8 @@ function recordedYields(progress: AgentProgress): YieldItem[] {
  * delivered no data.
  */
 function stepReport(monitor: SubagentRunMonitor, structured: boolean, firstYield: number): string | undefined {
-	const lastTurn = monitor.lastReportTurnText();
-	if (!structured) return lastTurn;
-	const assembled = assembleYieldResult(recordedYields(monitor.progress).slice(firstYield), lastTurn);
+	if (!structured) return monitor.lastReportTurnText();
+	const assembled = assembleYieldResult(recordedYields(monitor.progress).slice(firstYield));
 	if (!assembled || assembled.missingData) return undefined;
 	return typeof assembled.data === "string" ? assembled.data : JSON.stringify(assembled.data, null, 2);
 }
@@ -3149,8 +3149,7 @@ interface FinalizeRunArgs {
 	modelOverride?: string | string[];
 	/** Explicit pre-expansion model role alias selected for this run. */
 	modelRole?: string;
-	/** `false` = no `yield` tool: the run's last report turn is the result verbatim. Default `true`. */
-	structured?: boolean;
+	/** Absent = no `yield` tool: the run's last report turn is the result verbatim (see {@link usesYield}). */
 	outputSchema?: unknown;
 	outputSchemaMode?: StructuredSubagentSchemaMode;
 	outputSchemaSource?: StructuredSubagentSchemaSource;
@@ -3189,7 +3188,7 @@ async function finalizeRunResult(args: FinalizeRunArgs): Promise<SingleResult> {
 	// A structured run finalizes from its yield (falling back to the run's
 	// output); a message-result run is exactly its final report turn, never
 	// the narration of earlier turns.
-	const structured = args.structured !== false;
+	const structured = usesYield(args.outputSchema);
 	let rawOutput = structured ? monitor.rawOutput() : (monitor.lastReportTurnText() ?? "");
 	const yieldItems = recordedYields(progress);
 	// Breadcrumb the synchronous yield-payload shaping (O(rawOutput)) so a block
@@ -3207,8 +3206,6 @@ async function finalizeRunResult(args: FinalizeRunArgs): Promise<SingleResult> {
 			outputSchema: args.outputSchema,
 			outputSchemaMode: args.outputSchemaMode,
 			outputSchemaSource: args.outputSchemaSource,
-			lastAssistantText: monitor.lastReportTurnText(),
-			structured,
 		});
 	} finally {
 		popLoopPhase();
@@ -3417,8 +3414,7 @@ export interface IrcWakeTurnMonitorOptions {
 	completionProbe?: boolean;
 	softRequestBudget?: number;
 	softRequestBudgetNotice?: boolean;
-	/** `false` = the session has no `yield` tool; see {@link ExecutorOptions.structured}. */
-	structured?: boolean;
+	/** Absent = the session has no `yield` tool; see {@link usesYield}. */
 	outputSchema?: unknown;
 	outputSchemaMode?: StructuredSubagentSchemaMode;
 	outputSchemaSource?: StructuredSubagentSchemaSource;
@@ -3817,7 +3813,6 @@ export function attachIrcWakeTurnMonitor(session: AgentSession, options: IrcWake
 					task: ircTask,
 					modelOverride: options.modelOverride,
 					modelRole: options.modelRole,
-					structured: options.structured,
 					outputSchema: options.outputSchema,
 					outputSchemaMode: options.outputSchemaMode,
 					outputSchemaSource: options.outputSchemaSource,
@@ -3844,7 +3839,7 @@ export function attachIrcWakeTurnMonitor(session: AgentSession, options: IrcWake
 				// A focused-user result can complete without a registered wake job;
 				// enqueue its delivery without reserving an execution slot.
 				const messageResult =
-					(userPrompted || ownerPrompted) && options.structured === false && result?.outputPath !== undefined;
+					(userPrompted || ownerPrompted) && !usesYield(options.outputSchema) && result?.outputPath !== undefined;
 				if (messageResult && !wakeJob && ownerId && session.asyncJobManager && result) {
 					const text = formatTaskResultSummary(result, { totalDurationMs: result.durationMs });
 					try {
@@ -4078,8 +4073,7 @@ export interface FollowUpTurnOptions {
 	description?: string;
 	/** Explicit pre-expansion model role alias retained from the original run. */
 	modelRole?: string;
-	/** Structured-output state retained from the original invocation; see {@link ExecutorOptions.structured}. */
-	structured?: boolean;
+	/** Output schema retained from the original invocation; absent = no `yield` tool (see {@link usesYield}). */
 	outputSchema?: unknown;
 	outputSchemaMode?: StructuredSubagentSchemaMode;
 	outputSchemaSource?: StructuredSubagentSchemaSource;
@@ -4274,7 +4268,7 @@ async function driveFollowUpTurn(
 	// ordinary contract so the wake cannot consume pooled items, wait it out,
 	// then reinstall and reattach for the retry.
 	let attemptUnsubscribe = monitor.attach(session);
-	const structured = options.structured !== false;
+	const structured = usesYield(options.outputSchema);
 	// As in a first run: this turn's monitor would take a wake turn's answer
 	// (or its `yield`) as this turn's result, so non-parent wakes wait for it.
 	const releaseIrcWakes = session.holdIrcWakes();
@@ -4325,7 +4319,6 @@ async function driveFollowUpTurn(
 			agent,
 			task: message,
 			modelRole: options.modelRole,
-			structured,
 			outputSchema: options.outputSchema,
 			outputSchemaMode: options.outputSchemaMode,
 			outputSchemaSource: options.outputSchemaSource,
@@ -4758,7 +4751,7 @@ async function runSubprocessOnThisThread(options: ExecutorOptions): Promise<Sing
 		onProgress,
 	} = options;
 	const cleanupGraceMs = options.cleanupGraceMs ?? TASK_ABORT_CLEANUP_GRACE_MS;
-	const structured = options.structured !== false;
+	const structured = usesYield(outputSchema);
 	const startTime = Date.now();
 	// Set by the session's onFirstChatDispatch hook the first time the agent
 	// loop dispatches a chat request to the provider — the launch-complete boundary.
@@ -4939,7 +4932,6 @@ async function runSubprocessOnThisThread(options: ExecutorOptions): Promise<Sing
 		maxRuntimeMs,
 		softRequestBudget,
 		softRequestBudgetNotice,
-		structured,
 		outputSchema,
 		outputSchemaMode: options.outputSchemaMode,
 		outputSchemaSource: options.outputSchemaSource,
@@ -5806,7 +5798,6 @@ async function runSubprocessOnThisThread(options: ExecutorOptions): Promise<Sing
 			assignment,
 			modelOverride,
 			modelRole,
-			structured,
 			outputSchema,
 			outputSchemaMode: options.outputSchemaMode,
 			outputSchemaSource: options.outputSchemaSource,
