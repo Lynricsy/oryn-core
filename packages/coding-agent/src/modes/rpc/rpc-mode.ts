@@ -235,6 +235,7 @@ import { applyRpcManageSkill, buildRpcSkillDetail } from "./rpc-skills";
 import { RpcSubagentRegistry, readRpcSubagentTranscript, resolveOwnedLiveSubagent } from "./rpc-subagents";
 import { startRpcTan } from "./rpc-tan";
 import { type HostedComponentFactory, showHostedComponent } from "./rpc-custom-ui";
+import { OrynComposerPredictor } from "./oryn-composer-prediction";
 import { handleOrynMarkSessionStart, handleOrynSelectModel } from "./oryn-model-source";
 import { handleOrynCancelJob, isOrynLoopPromptCandidate, orynPlanModeConflict } from "./oryn-ui-parity";
 import type {
@@ -1920,6 +1921,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 	const extensionUserMessageTracker = new RpcExtensionUserMessageTracker();
 	const wordPredictor = new RpcWordPredictor();
 	const btw = new RpcBtwController(session, output);
+	const composerPredictor = new OrynComposerPredictor(session, output);
 	// A continuation abandoned while waiting leaves nothing to end the activity stretch: re-check settlement.
 	const goalController = new RpcGoalController(session, () => void settleWatcher.check());
 	// A scheduled or held goal turn will start a turn: every settle report treats it as busy,
@@ -2447,6 +2449,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				output(error(undefined, "goal", err instanceof Error ? err.message : String(err)));
 			});
 			if (event.type === "agent_end") loopModeController.onAgentEnd();
+			composerPredictor.observe(event);
 		});
 		// A chat without settings of its own follows the `chat.*` defaults: announce a change,
 		// including one another process wrote to the config file, so the host re-reads them.

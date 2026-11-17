@@ -74,6 +74,7 @@ import type { RpcGoalOp, RpcGoalResult } from "./rpc-goal";
 import type { RpcMessagesPage } from "./rpc-messages";
 import type { OrynRpcCommand, OrynRpcResponse } from "./oryn-model-source";
 import type { OrynUiParityRpcCommand, OrynUiParityRpcResponse } from "./oryn-ui-parity";
+export type { OrynComposerPredictionFrame } from "./oryn-composer-prediction";
 
 // ============================================================================
 // RPC Commands (stdin)

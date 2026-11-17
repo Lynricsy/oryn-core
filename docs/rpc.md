@@ -210,6 +210,12 @@ Oryn Core only; no wire change. orbd sets two environment variables on the agent
 
 With `ORYN_CENTRAL_CONFIG=1`, the `omfg` save dialog (title `Save TTSR rule where?`, unchanged) offers exactly `This project (Oryn project config)`, `Global — all projects (Oryn central config)`, `Amend with feedback…` — or only the last two when `ORYN_PROJECT_CONFIG_ROOT` is unset. The project option saves to `<root>/.omp/rules/<name>.md` (`savedPath` `~/.oryn/project-config/.omp/rules/<name>.md`), the global option to `~/.omp/agent/rules/<name>.md`. Without the variable the upstream options `This project (.omp/rules)` / `Global — all projects (~/.omp/agent/rules)` are sent unchanged.
 
+### Oryn: composer next-message prediction
+
+- Frame: `{ type: "oryn_composer_prediction", choices: string[] }`
+
+Oryn Core only; no command. With `composer.predictions` on, RPC mode runs the TUI's next-message prediction (`ComposerPredictionController`: same side request at minimal effort, 15 s deadline, `model_usage` entry with purpose `composer-prediction`, OpenTelemetry metrics) after a terminal `agent_end` whose last assistant message neither errored nor aborted, unless an auto-retry is pending. `composer.predictionAlternatives` asks for up to four `choices`, most likely first. The frame carries the full current list whenever it changes; `choices: []` withdraws it — on `agent_start`, `auto_compaction_start`, turning `composer.predictions` off (or `composer.predictionAlternatives` off while several are offered), or the conversation moving past the message the prediction was made for. Unlike the TUI the server cannot see the host's draft, so it requests regardless of the draft; hosts should show a choice only while the draft is a prefix of it. The frame is not on the generated wire schema.
+
 ### Thinking
 
 - `{ id?, type: "set_thinking_level", level: ThinkingLevel }`
