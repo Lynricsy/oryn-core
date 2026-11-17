@@ -5439,8 +5439,13 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 	};
 
 	const handleCommand = async (command: RpcCommand): Promise<RpcResponse> => {
-		if (!Object.hasOwn(SESSION_CHANGE_TYPES, command.type)) return handleCommandImpl(command);
-		return withSessionChange(() => handleCommandImpl(command));
+		try {
+			if (!Object.hasOwn(SESSION_CHANGE_TYPES, command.type)) return await handleCommandImpl(command);
+			return await withSessionChange(() => handleCommandImpl(command));
+		} finally {
+			// Oryn：clear_context、navigate_tree 等命令不经会话事件就改动上下文，撤回因此过期的预测。
+			composerPredictor.sync();
+		}
 	};
 
 	// Deferred shutdown (pi.shutdown() from an extension) must not kill the

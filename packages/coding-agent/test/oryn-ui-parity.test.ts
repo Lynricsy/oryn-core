@@ -1,7 +1,8 @@
 /**
  * Oryn UI-command parity over RPC (see ORYN.md「例外清单」): loop prompt capture on `prompt`,
  * `/omfg` rule preview, `oryn_cancel_job`, `textModeExecutable` on available commands,
- * `set_plan_mode` goal/vibe exclusion, and the `mounted` flag on `get_active_tools`.
+ * `set_plan_mode` goal/vibe exclusion, the `mounted` flag on `get_active_tools`, and the
+ * `oryn_composer_prediction` frame (pushed after a turn, withdrawn when a command rewrites the context).
  */
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
@@ -430,4 +431,55 @@ describe("/omfg over RPC", () => {
 			"TTSR rule — could not confirm a match in this conversation",
 		);
 	});
+});
+
+describe("composer prediction over RPC", () => {
+	/** 推送过的预测帧的 choices，按到达顺序。 */
+	function predictions(client: FixtureRpc): unknown[] {
+		return client.frames.filter(frame => frame.type === "oryn_composer_prediction").map(frame => frame.choices);
+	}
+
+	/** 发一条 prompt，等它结束后的预测推送到达（之前的预测帧不算）。 */
+	async function promptAndAwaitPrediction(client: FixtureRpc, message: string): Promise<void> {
+		const before = client.frames.length;
+		await client.data({ type: "prompt", message });
+		await client.waitFor(
+			frame =>
+				client.frames.indexOf(frame) >= before &&
+				frame.type === "oryn_composer_prediction" &&
+				Array.isArray(frame.choices) &&
+				frame.choices.length > 0,
+		);
+	}
+
+	test("a completed turn pushes the prediction and clear_context withdraws it before responding", async () => {
+		const client = await start({ ORYN_COMPOSER_PREDICTIONS: "1" });
+		await promptAndAwaitPrediction(client, "hello");
+		expect(predictions(client)).toEqual([["ok"]]);
+
+		const response = await client.send({ type: "clear_context" });
+		expect(response.success).toBe(true);
+		const withdrawn = client.frames.findIndex(
+			frame => frame.type === "oryn_composer_prediction" && Array.isArray(frame.choices) && !frame.choices.length,
+		);
+		expect(withdrawn).toBeGreaterThanOrEqual(0);
+		expect(withdrawn).toBeLessThan(client.frames.indexOf(response));
+		expect(predictions(client)).toEqual([["ok"], []]);
+	}, 60_000);
+
+	test("navigating the tree away from the predicted message withdraws the prediction", async () => {
+		const client = await start({ ORYN_COMPOSER_PREDICTIONS: "1" });
+		await promptAndAwaitPrediction(client, "first");
+		await promptAndAwaitPrediction(client, "second");
+		const { messages } = await client.data<{ messages: Array<AgentMessage & { entryId?: string }> }>({
+			type: "get_messages",
+		});
+		const firstReply = messages.find(message => message.role === "assistant")?.entryId;
+		if (!firstReply) throw new Error("expected the first assistant reply to carry an entry id");
+		const before = predictions(client).length;
+
+		await client.data({ type: "navigate_tree", entryId: firstReply });
+
+		expect(predictions(client).slice(before)).toEqual([[]]);
+	}, 60_000);
 });

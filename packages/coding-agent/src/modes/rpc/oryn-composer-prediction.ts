@@ -54,7 +54,7 @@ export class OrynComposerPredictor {
 			viewSession: session,
 			focusedAgentId: undefined,
 			editor: { getText: () => "" },
-			ui: { requestRender: () => this.#sync() },
+			ui: { requestRender: () => this.sync() },
 		} as unknown as PredictionContext;
 		this.#controller = new ComposerPredictionController(context, options);
 		// 设置与会话同寿命，监听不需要退订。
@@ -82,11 +82,16 @@ export class OrynComposerPredictor {
 				}
 				break;
 		}
-		// 对话推进（新消息、切换叶子）会让已推送的预测过期，即使控制器没有重绘。
-		this.#sync();
+		// 对话推进（新消息）会让已推送的预测过期，即使控制器没有重绘。
+		this.sync();
 	}
 
-	#sync(): void {
+	/**
+	 * 把当前可用的预测与上次推送的比对，变了就推一帧。会话事件之外改动上下文的命令（`clear_context`、
+	 * `navigate_tree`、`switch_leaf`、`compact`、`handoff` 等不一定发会话事件）也要在完成后调这里，
+	 * 让已过期的预测被撤回。
+	 */
+	sync(): void {
 		const choices = this.#controller.choices ?? [];
 		const emitted = this.#emitted;
 		if (choices.length === emitted.length && choices.every((choice, i) => choice === emitted[i])) return;
