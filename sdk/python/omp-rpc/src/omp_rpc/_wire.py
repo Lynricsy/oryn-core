@@ -1829,6 +1829,16 @@ class AskAnswer:
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
+class HostToolResultPayload:
+    """Tool output: content blocks plus optional details."""
+    content: tuple[UserContent, ...]
+    details: JsonValue | None = None
+    is_error: bool | None = None
+    useless: bool | None = None
+    provider_metadata: JsonObject | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
 class HostToolDefinition:
     name: str
     description: str
@@ -3524,6 +3534,17 @@ def parse_ask_answer(value: object, path: str = "AskAnswer") -> AskAnswer:
     )
 
 
+def parse_host_tool_result_payload(value: object, path: str = "HostToolResultPayload") -> HostToolResultPayload:
+    payload = expect_object(value, path)
+    return HostToolResultPayload(
+        content=required(payload, "content", array(parse_user_content), path),
+        details=optional(payload, "details", decode_json, path),
+        is_error=optional(payload, "isError", decode_bool, path),
+        useless=optional(payload, "useless", decode_bool, path),
+        provider_metadata=optional(payload, "providerMetadata", decode_json_object, path),
+    )
+
+
 def parse_host_tool_definition(value: object, path: str = "HostToolDefinition") -> HostToolDefinition:
     payload = expect_object(value, path)
     return HostToolDefinition(
@@ -3905,6 +3926,28 @@ class WireClient:
         params: dict[str, object] = {}
         params["jobId"] = job_id
         return required(expect_object(self._command("oryn_cancel_job", params), "oryn_cancel_job"), "cancelled", decode_bool, "oryn_cancel_job")
+
+    def oryn_tool_defs(self, names: Sequence[str] | None = None) -> tuple[ToolDescriptor, ...]:
+        """Oryn: definitions of the named session tools (default: the enabled ones); unknown and denied names are skipped."""
+        params: dict[str, object] = {}
+        if names is not None:
+            params["names"] = list(names)
+        return required(expect_object(self._command("oryn_tool_defs", params), "oryn_tool_defs"), "tools", array(parse_tool_descriptor), "oryn_tool_defs")
+
+    def oryn_tool_call(self, call_id: str, tool_name: str, *, arguments: JsonObject | None = None) -> HostToolResultPayload:
+        """Oryn: run one session tool directly, without the model; partial output streams as `oryn_tool_update` frames. A tool that throws yields `isError: true`."""
+        params: dict[str, object] = {}
+        params["callId"] = call_id
+        params["toolName"] = tool_name
+        if arguments is not None:
+            params["arguments"] = arguments
+        return required(expect_object(self._command("oryn_tool_call", params, timeout=1800), "oryn_tool_call"), "result", parse_host_tool_result_payload, "oryn_tool_call")
+
+    def oryn_tool_cancel(self, call_id: str) -> bool:
+        """Oryn: abort a running `oryn_tool_call`; false when no call with that id is running."""
+        params: dict[str, object] = {}
+        params["callId"] = call_id
+        return required(expect_object(self._command("oryn_tool_cancel", params), "oryn_tool_cancel"), "cancelled", decode_bool, "oryn_tool_cancel")
 
     def steer_subagent(self, subagent_id: str, message: str) -> None:
         """Send a message to a running subagent as its user."""
@@ -4574,6 +4617,7 @@ __all__ = [
     "HandoffResult",
     "HookMessage",
     "HostToolDefinition",
+    "HostToolResultPayload",
     "HostUriSchemeDefinition",
     "ImageContent",
     "InputUiRequest",
@@ -4782,6 +4826,7 @@ __all__ = [
     "parse_handoff_result",
     "parse_hook_message",
     "parse_host_tool_definition",
+    "parse_host_tool_result_payload",
     "parse_host_uri_scheme_definition",
     "parse_image_content",
     "parse_input_ui_request",

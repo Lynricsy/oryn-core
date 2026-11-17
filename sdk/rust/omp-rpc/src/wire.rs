@@ -5719,6 +5719,43 @@ pub struct OrynCancelJobResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OrynToolDefsParams {
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub names: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OrynToolDefsResult {
+	pub tools: Vec<ToolDescriptor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OrynToolCallParams {
+	#[serde(rename = "callId")]
+	pub call_id: String,
+	#[serde(rename = "toolName")]
+	pub tool_name: String,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub arguments: Option<Map<String, Value>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OrynToolCallResult {
+	pub result: HostToolResultPayload,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OrynToolCancelParams {
+	#[serde(rename = "callId")]
+	pub call_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OrynToolCancelResult {
+	pub cancelled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SteerSubagentParams {
 	#[serde(rename = "subagentId")]
 	pub subagent_id: String,
@@ -7234,6 +7271,61 @@ impl Command for OrynCancelJobCommand {
 
 	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
 		serde_json::from_value::<OrynCancelJobResult>(data.unwrap_or_else(|| Value::Object(Map::new()))).map(|result| result.cancelled)
+	}
+}
+
+/// Oryn: definitions of the named session tools (default: the enabled ones); unknown and denied names are skipped.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct OrynToolDefsCommand {
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub names: Option<Vec<String>>,
+}
+
+impl Command for OrynToolDefsCommand {
+	const NAME: &'static str = "oryn_tool_defs";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = Vec<ToolDescriptor>;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<OrynToolDefsResult>(data.unwrap_or_else(|| Value::Object(Map::new()))).map(|result| result.tools)
+	}
+}
+
+/// Oryn: run one session tool directly, without the model; partial output streams as `oryn_tool_update` frames. A tool that throws yields `isError: true`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OrynToolCallCommand {
+	#[serde(rename = "callId")]
+	pub call_id: String,
+	#[serde(rename = "toolName")]
+	pub tool_name: String,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub arguments: Option<Map<String, Value>>,
+}
+
+impl Command for OrynToolCallCommand {
+	const NAME: &'static str = "oryn_tool_call";
+	const TIMEOUT_MS: Option<u64> = Some(1800000);
+	type Output = HostToolResultPayload;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<OrynToolCallResult>(data.unwrap_or_else(|| Value::Object(Map::new()))).map(|result| result.result)
+	}
+}
+
+/// Oryn: abort a running `oryn_tool_call`; false when no call with that id is running.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OrynToolCancelCommand {
+	#[serde(rename = "callId")]
+	pub call_id: String,
+}
+
+impl Command for OrynToolCancelCommand {
+	const NAME: &'static str = "oryn_tool_cancel";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = bool;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<OrynToolCancelResult>(data.unwrap_or_else(|| Value::Object(Map::new()))).map(|result| result.cancelled)
 	}
 }
 

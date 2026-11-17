@@ -74,7 +74,9 @@ import type { RpcGoalOp, RpcGoalResult } from "./rpc-goal";
 import type { RpcMessagesPage } from "./rpc-messages";
 import type { OrynRpcCommand, OrynRpcResponse } from "./oryn-model-source";
 import type { OrynUiParityRpcCommand, OrynUiParityRpcResponse } from "./oryn-ui-parity";
+import type { OrynToolExecRpcCommand, OrynToolExecRpcResponse } from "./oryn-tool-exec";
 export type { OrynComposerPredictionFrame } from "./oryn-composer-prediction";
+export type { OrynToolUpdateFrame } from "./oryn-tool-exec";
 
 // ============================================================================
 // RPC Commands (stdin)
@@ -713,7 +715,8 @@ export type RpcCommand =
 	| { id?: string; type: "btw_inject"; recordId: string }
 	| { id?: string; type: "get_btw_history" }
 	| OrynRpcCommand
-	| OrynUiParityRpcCommand;
+	| OrynUiParityRpcCommand
+	| OrynToolExecRpcCommand;
 
 // ============================================================================
 // RPC State
@@ -3819,6 +3822,7 @@ export type RpcResponse =
 	  }
 	| OrynRpcResponse
 	| OrynUiParityRpcResponse
+	| OrynToolExecRpcResponse
 
 	// Error response (any command can fail); `code` is an optional machine-readable reason.
 	| {

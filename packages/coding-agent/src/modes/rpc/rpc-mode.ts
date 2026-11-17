@@ -237,6 +237,7 @@ import { startRpcTan } from "./rpc-tan";
 import { type HostedComponentFactory, showHostedComponent } from "./rpc-custom-ui";
 import { OrynComposerPredictor } from "./oryn-composer-prediction";
 import { handleOrynMarkSessionStart, handleOrynSelectModel } from "./oryn-model-source";
+import { OrynToolExecutor } from "./oryn-tool-exec";
 import { handleOrynCancelJob, isOrynLoopPromptCandidate, orynPlanModeConflict } from "./oryn-ui-parity";
 import type {
 	RpcAbortAndRestoreQueueResult,
@@ -630,6 +631,10 @@ const TERMINAL_CLI_SUBCOMMANDS: ReadonlySet<string> = new Set<RpcTerminalCliSubc
 
 const BACKGROUND_COMMANDS: ReadonlySet<string> = new Set<RpcCommand["type"]>([
 	"bash",
+	// Oryn：直接执行工具的调用可以很长，取消必须能越过它。
+	"oryn_tool_call",
+	"oryn_tool_cancel",
+	"oryn_tool_defs",
 	"collab_join",
 	"collab_start",
 	"debug",
@@ -1922,6 +1927,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 	const wordPredictor = new RpcWordPredictor();
 	const btw = new RpcBtwController(session, output);
 	const composerPredictor = new OrynComposerPredictor(session, output);
+	const orynToolExec = new OrynToolExecutor(session, output);
 	// A continuation abandoned while waiting leaves nothing to end the activity stretch: re-check settlement.
 	const goalController = new RpcGoalController(session, () => void settleWatcher.check());
 	// A scheduled or held goal turn will start a turn: every settle report treats it as busy,
@@ -5170,6 +5176,30 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					return success(id, "oryn_cancel_job", handleOrynCancelJob(session, command));
 				} catch (err) {
 					return error(id, "oryn_cancel_job", err instanceof Error ? err.message : String(err));
+				}
+			}
+
+			case "oryn_tool_defs": {
+				try {
+					return success(id, "oryn_tool_defs", orynToolExec.defs(command));
+				} catch (err) {
+					return error(id, "oryn_tool_defs", err instanceof Error ? err.message : String(err));
+				}
+			}
+
+			case "oryn_tool_call": {
+				try {
+					return success(id, "oryn_tool_call", await orynToolExec.call(command));
+				} catch (err) {
+					return error(id, "oryn_tool_call", err instanceof Error ? err.message : String(err));
+				}
+			}
+
+			case "oryn_tool_cancel": {
+				try {
+					return success(id, "oryn_tool_cancel", orynToolExec.cancel(command));
+				} catch (err) {
+					return error(id, "oryn_tool_cancel", err instanceof Error ? err.message : String(err));
 				}
 			}
 

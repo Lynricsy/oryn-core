@@ -3,6 +3,7 @@
 //
 // 以 nornzach/oh-my-pi-gui 的 `scripts/smoke-sidecar.mjs`（MIT）为蓝本：
 //   ready → negotiate_protocol{2} → get_state → oryn_select_model{} / oryn_cancel_job{}（期望参数错误，证明已接线）
+//   → oryn_tool_call{bash echo}（不经模型直接执行工具，期望回显）
 //   → get_available_models（≤6s）→ get_state → set_thinking_level → get_settings → set_setting 往返（结束后还原）。
 // 末行输出 `VERDICT PASS|FAIL`，失败退出码非 0。
 //
@@ -120,6 +121,17 @@ const line = (label, r) =>
 	console.log(
 		`${"oryn_cancel_job[wired]".padEnd(24)}${cancelJobWired ? "ok " : "ERR"} ${results.at(-1).ms}ms ${cancelJob.error}`,
 	);
+	const toolCall = await send("oryn_tool_call", {
+		callId: "smoke-bash",
+		toolName: "bash",
+		arguments: { command: "echo oryn-tool-exec-smoke" },
+	});
+	const toolExecOk =
+		toolCall.success === true &&
+		JSON.stringify(toolCall.data?.result?.content ?? []).includes("oryn-tool-exec-smoke");
+	console.log(
+		`${"oryn_tool_call[bash]".padEnd(24)}${toolExecOk ? "ok " : "ERR"} ${results.at(-1).ms}ms${toolCall.success ? "" : ` ${toolCall.error}`}`,
+	);
 
 	const modelsFrame = await send("get_available_models");
 	const models = results.at(-1);
@@ -158,6 +170,7 @@ const line = (label, r) =>
 		negotiatedOk &&
 		orynWired &&
 		cancelJobWired &&
+		toolExecOk &&
 		!wedged &&
 		modelsReturned &&
 		settingsReadable &&
@@ -165,6 +178,7 @@ const line = (label, r) =>
 	if (!negotiatedOk) console.log("FAIL negotiate_protocol 未协商到 v2");
 	if (!orynWired) console.log("FAIL oryn_select_model 未接线");
 	if (!cancelJobWired) console.log("FAIL oryn_cancel_job 未接线");
+	if (!toolExecOk) console.log("FAIL oryn_tool_call 未能直接执行 bash");
 	if (!modelsReturned) console.log("FAIL get_available_models 超出时限");
 	if (wedged) console.log("FAIL 模型发现后的命令卡住——串行队列阻塞");
 	console.log(

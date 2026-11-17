@@ -199,6 +199,28 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 		unwrap: "cancelled",
 	},
 	{
+		name: "oryn_tool_defs",
+		doc: "Oryn: definitions of the named session tools (default: the enabled ones); unknown and denied names are skipped.",
+		params: { "names?": "string[]" },
+		result: { tools: "ToolDescriptor[]" },
+		unwrap: "tools",
+	},
+	{
+		name: "oryn_tool_call",
+		doc: "Oryn: run one session tool directly, without the model; partial output streams as `oryn_tool_update` frames. A tool that throws yields `isError: true`.",
+		params: { callId: "string", toolName: "string", "arguments?": "Record<string, unknown>" },
+		result: { result: "HostToolResultPayload" },
+		unwrap: "result",
+		timeoutMs: 1_800_000,
+	},
+	{
+		name: "oryn_tool_cancel",
+		doc: "Oryn: abort a running `oryn_tool_call`; false when no call with that id is running.",
+		params: { callId: "string" },
+		result: { cancelled: "boolean" },
+		unwrap: "cancelled",
+	},
+	{
 		name: "steer_subagent",
 		doc: "Send a message to a running subagent as its user.",
 		params: { subagentId: "string", message: "string" },

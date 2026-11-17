@@ -8093,6 +8093,63 @@ func (v *OrynCancelJobResult) decodeFrom(raw map[string]json.RawMessage) error {
 	return nil
 }
 
+type OrynToolDefsResult struct {
+	Tools []ToolDescriptor `json:"tools"`
+}
+
+func (v *OrynToolDefsResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "OrynToolDefsResult", v.decodeFrom)
+}
+
+func (v *OrynToolDefsResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out OrynToolDefsResult
+	d := fieldDecoder{raw: raw, owner: "OrynToolDefsResult"}
+	d.required("tools", &out.Tools)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type OrynToolCallResult struct {
+	Result HostToolResultPayload `json:"result"`
+}
+
+func (v *OrynToolCallResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "OrynToolCallResult", v.decodeFrom)
+}
+
+func (v *OrynToolCallResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out OrynToolCallResult
+	d := fieldDecoder{raw: raw, owner: "OrynToolCallResult"}
+	d.required("result", &out.Result)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type OrynToolCancelResult struct {
+	Cancelled bool `json:"cancelled"`
+}
+
+func (v *OrynToolCancelResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "OrynToolCancelResult", v.decodeFrom)
+}
+
+func (v *OrynToolCancelResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out OrynToolCancelResult
+	d := fieldDecoder{raw: raw, owner: "OrynToolCancelResult"}
+	d.required("cancelled", &out.Cancelled)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
 type LiveStartResult struct {
 	Voice string `json:"voice"`
 }
@@ -8936,6 +8993,44 @@ type OrynCancelJobCommand struct {
 func (c Commands) OrynCancelJob(ctx context.Context, p OrynCancelJobCommand) (bool, error) {
 	var out OrynCancelJobResult
 	err := c.call(ctx, "oryn_cancel_job", p, 0, &out)
+	return out.Cancelled, err
+}
+
+// OrynToolDefsCommand holds the parameters of "oryn_tool_defs".
+type OrynToolDefsCommand struct {
+	Names []string `json:"names,omitempty"`
+}
+
+// OrynToolDefs sends "oryn_tool_defs": Oryn: definitions of the named session tools (default: the enabled ones); unknown and denied names are skipped.
+func (c Commands) OrynToolDefs(ctx context.Context, p OrynToolDefsCommand) ([]ToolDescriptor, error) {
+	var out OrynToolDefsResult
+	err := c.call(ctx, "oryn_tool_defs", p, 0, &out)
+	return out.Tools, err
+}
+
+// OrynToolCallCommand holds the parameters of "oryn_tool_call".
+type OrynToolCallCommand struct {
+	CallID    string                     `json:"callId"`
+	ToolName  string                     `json:"toolName"`
+	Arguments map[string]json.RawMessage `json:"arguments,omitempty"`
+}
+
+// OrynToolCall sends "oryn_tool_call": Oryn: run one session tool directly, without the model; partial output streams as `oryn_tool_update` frames. A tool that throws yields `isError: true`.
+func (c Commands) OrynToolCall(ctx context.Context, p OrynToolCallCommand) (HostToolResultPayload, error) {
+	var out OrynToolCallResult
+	err := c.call(ctx, "oryn_tool_call", p, 1800*time.Second, &out)
+	return out.Result, err
+}
+
+// OrynToolCancelCommand holds the parameters of "oryn_tool_cancel".
+type OrynToolCancelCommand struct {
+	CallID string `json:"callId"`
+}
+
+// OrynToolCancel sends "oryn_tool_cancel": Oryn: abort a running `oryn_tool_call`; false when no call with that id is running.
+func (c Commands) OrynToolCancel(ctx context.Context, p OrynToolCancelCommand) (bool, error) {
+	var out OrynToolCancelResult
+	err := c.call(ctx, "oryn_tool_cancel", p, 0, &out)
 	return out.Cancelled, err
 }
 

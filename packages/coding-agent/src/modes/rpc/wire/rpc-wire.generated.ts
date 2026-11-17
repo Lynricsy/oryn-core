@@ -1869,6 +1869,32 @@ export interface OrynCancelJobResult {
 	cancelled: boolean;
 }
 
+export interface OrynToolDefsParams {
+	names?: string[];
+}
+
+export interface OrynToolDefsResult {
+	tools: ToolDescriptor[];
+}
+
+export interface OrynToolCallParams {
+	callId: string;
+	toolName: string;
+	arguments?: Record<string, unknown>;
+}
+
+export interface OrynToolCallResult {
+	result: HostToolResultPayload;
+}
+
+export interface OrynToolCancelParams {
+	callId: string;
+}
+
+export interface OrynToolCancelResult {
+	cancelled: boolean;
+}
+
 export interface SteerSubagentParams {
 	subagentId: string;
 	message: string;
@@ -2182,6 +2208,9 @@ export interface RpcWireCommands {
 	get_subagent_messages: { params: GetSubagentMessagesParams; result: SubagentMessages };
 	cancel_subagent: { params: CancelSubagentParams; result: CancelSubagentResult };
 	oryn_cancel_job: { params: OrynCancelJobParams; result: OrynCancelJobResult };
+	oryn_tool_defs: { params: OrynToolDefsParams; result: OrynToolDefsResult };
+	oryn_tool_call: { params: OrynToolCallParams; result: OrynToolCallResult };
+	oryn_tool_cancel: { params: OrynToolCancelParams; result: OrynToolCancelResult };
 	steer_subagent: { params: SteerSubagentParams; result: undefined };
 	live_start: { params: LiveStartParams; result: LiveStartResult };
 	live_connect: { params: LiveConnectParams; result: LiveConnectResult };
