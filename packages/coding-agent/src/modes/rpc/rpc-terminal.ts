@@ -373,41 +373,41 @@ export class RpcTerminalHost {
 	): { entry: TerminalEntry; run: Promise<PtyRunResult> } {
 		const { cols, rows } = clampSize(undefined, undefined);
 		const entry = this.#create({ kind, title: commandTitle(request.command), cwd: request.cwd, cols, rows });
-		const run = (entry.session as PtySession)
-			.start(
-				{
-					command: request.command,
-					cwd: request.cwd,
-					env: request.env,
-					timeoutMs: request.timeoutMs,
-					signal: request.signal,
-					shell: request.shell,
-					cols,
-					rows,
-				},
-				(err, chunk) => {
-					if (err || !chunk) return;
-					this.#append(entry, chunk);
-					onChunk?.(chunk);
-				},
-				(err, pid) => {
-					if (!err) onStart?.(pid);
-				},
-			)
-			.then(
-				result => {
-					this.#exited(entry, result);
-					return result;
-				},
-				(error: unknown) => {
-					const notice = `PTY error: ${error instanceof Error ? error.message : String(error)}\r\n`;
-					this.#append(entry, notice);
-					onChunk?.(notice);
-					const result: PtyRunResult = { exitCode: undefined, cancelled: false, timedOut: false };
-					this.#exited(entry, result);
-					return result;
-				},
-			);
+		const pty = entry.session as PtySession;
+		const options = {
+			cwd: request.cwd,
+			env: request.env,
+			timeoutMs: request.timeoutMs,
+			signal: request.signal,
+			cols,
+			rows,
+		};
+		const output = (err: Error | null, chunk: string) => {
+			if (err || !chunk) return;
+			this.#append(entry, chunk);
+			onChunk?.(chunk);
+		};
+		const started = (err: Error | null, pid: number) => {
+			if (!err) onStart?.(pid);
+		};
+		const run = (
+			request.args
+				? pty.startArgv({ ...options, application: request.shell, args: request.args }, output, started)
+				: pty.start({ ...options, shell: request.shell, command: request.command }, output, started)
+		).then(
+			result => {
+				this.#exited(entry, result);
+				return result;
+			},
+			(error: unknown) => {
+				const notice = `PTY error: ${error instanceof Error ? error.message : String(error)}\r\n`;
+				this.#append(entry, notice);
+				onChunk?.(notice);
+				const result: PtyRunResult = { exitCode: undefined, cancelled: false, timedOut: false };
+				this.#exited(entry, result);
+				return result;
+			},
+		);
 		return { entry, run };
 	}
 

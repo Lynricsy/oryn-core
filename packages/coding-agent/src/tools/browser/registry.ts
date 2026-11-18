@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { getLogsDir, isCompiledBinary, isRecord, logger, untilAborted, workerHostEntry } from "@oh-my-pi/pi-utils";
+import { isCompiledBinary, isRecord, logger, untilAborted, workerHostEntry } from "@oh-my-pi/pi-utils";
 import type { Subprocess } from "bun";
 import type { Browser, CDPSession } from "puppeteer-core";
 import { ToolAbortError } from "../tool-errors";
@@ -12,7 +12,7 @@ import {
 	resolveSpawnArgs,
 	waitForCdp,
 } from "./attach";
-import type { CmuxKind } from "./cmux/rpc";
+import { type CmuxKind, CmuxUnavailableError } from "./cmux/rpc";
 import { CmuxSocketClient } from "./cmux/socket-client";
 import {
 	BROWSER_PROTOCOL_TIMEOUT_MS,
@@ -254,7 +254,12 @@ export function normalizeConnectedCdpUrl(rawCdpUrl: string): string {
 async function openBrowserHandle(kind: BrowserKind, opts: AcquireBrowserOptions): Promise<BrowserHandle> {
 	if (kind.kind === "cmux") {
 		const client = new CmuxSocketClient({ socketPath: kind.socketPath, password: kind.password });
-		await client.connect();
+		await client.connect().catch((error: unknown) => {
+			if (error instanceof ToolError && !(error instanceof ToolAbortError)) {
+				throw new CmuxUnavailableError(error.message);
+			}
+			throw error;
+		});
 		return {
 			key: browserKey(kind),
 			kind,
@@ -558,11 +563,6 @@ async function openSharedHeadlessHandle(
 			viewport: vp,
 			signal: opts.signal,
 		});
-		if (!shared) {
-			throw new ToolError(
-				`Shared browser daemon unavailable (broker start or Chromium launch failed); check \`omp ps\` for omp.browser.* daemons and ${getLogsDir()} for details`,
-			);
-		}
 		const puppeteer = await loadPuppeteer();
 		const browser = await connectPuppeteer(puppeteer, {
 			browserWSEndpoint: shared.wsEndpoint,

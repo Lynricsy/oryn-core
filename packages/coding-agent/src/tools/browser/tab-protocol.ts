@@ -1,6 +1,7 @@
 import type { ImageContent, TextContent } from "@oh-my-pi/pi-ai";
 import type { ImageTokenization } from "@oh-my-pi/pi-catalog/compat/image-tokenization";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
+import type { Viewport } from "puppeteer-core";
 import type { FrontTabSource } from "./native-windows";
 import type { HiddenFrame } from "./relay/protocol";
 
@@ -107,7 +108,7 @@ export type WorkerInitPayload =
 			stealth?: boolean;
 			/** Create the page without showing it (a panel page the user keeps looking past). */
 			background?: boolean;
-			viewport?: { width: number; height: number; deviceScaleFactor?: number };
+			viewport?: Viewport;
 			dialogs?: "accept" | "dismiss";
 			/** Hostname patterns allowed for every page request. */
 			allowedDomains?: string[];
@@ -134,7 +135,7 @@ export type WorkerInitPayload =
 			/** The tab's upload staging folder, which outlives a recycled worker; see `UploadStaging`. */
 			uploadDir: string;
 			page: AttachPage;
-			viewport?: { width: number; height: number; deviceScaleFactor?: number };
+			viewport?: Viewport;
 			dialogs?: "accept" | "dismiss";
 			/** Hostname patterns allowed for every page request. */
 			allowedDomains?: string[];
@@ -233,6 +234,11 @@ export interface RunErrorPayload {
 	 * (`target_closed`, `canceled_by_user`): after a user cancel the relay hides the tab, otherwise it is re-adopted.
 	 */
 	debuggerDetached?: { when: "during" | "before"; reason: string };
+	/**
+	 * The page's Puppeteer session went stale (main frame detached, CDP session closed) `during` this run, after its
+	 * code started, or `before` it, so nothing ran; the supervisor reattaches the target on a new worker.
+	 */
+	pageLost?: { when: "during" | "before" };
 }
 
 export type WorkerOutbound =

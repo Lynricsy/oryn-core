@@ -6,6 +6,10 @@
 
 - Fixed Gemini rejecting every request in a session with `enum[0]: cannot be empty` when any tool offered an empty string as a choice ([#46](https://github.com/nornzach/oh-my-pi-gui/issues/46))
 ### Changed
+### Added
+
+- Claude usage reports now carry the account's subscription plan (`Max 5x`, `Max 20x`, `Pro`, `Team`, `Enterprise`) in `metadata.subscriptionPlan`, read from the OAuth profile on every fetch, so an auth broker serves it to its clients with the rest of the report. Added `usageSubscriptionPlan` and `claudeProfilePlan`
+
 ## [18.22.2] - 2026-11-18
 
 ### Added

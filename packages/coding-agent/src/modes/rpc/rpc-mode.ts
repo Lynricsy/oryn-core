@@ -100,7 +100,7 @@ import { defaultLoadModeForToolName } from "../../tools/essential-tools";
 import { DEFAULT_TTS_VOICE } from "../../tts/models";
 import { ttsClient } from "../../tts/tts-client";
 import { resolveLocalSpeechModelId } from "../../tts/vocalizer";
-import { decodeWav, encodeWav } from "../../tts/wav";
+import { decodeVoiceWav, encodeWav } from "../../tts/wav";
 import type { EventBus } from "../../utils/event-bus";
 import { calculateTokensPerSecond } from "../../utils/token-rate";
 import {
@@ -616,7 +616,7 @@ export function dispatchRpcControlFrame(parsed: unknown, deps: RpcInputFrameDeps
  * Commands that skip the serial queue entirely; see {@link dispatchRpcInputFrame}.
  * Execution, discovery/import, OAuth, and local speech inference can all be slow;
  * their control frames or an unrelated prompt must remain readable while they
- * run. (`prompt` and `steer_subagent` are also backgrounded there, but start
+ * run. (`prompt`, `steer_subagent`, and `handoff` are also backgrounded there, but start
  * through the serial tail.) `btw_cancel` is synchronous and must overtake a
  * `btw` still starting or a long serial command; `abort_branch_summary`
  * likewise overtakes the `navigate_tree` whose summary it stops.
@@ -735,12 +735,13 @@ function isDetachedSerialCommand(command: RpcCommand): boolean {
  * backgrounded too, so a cold prediction engine never stalls the command queue
  * behind a keystroke. `live_start`, `live_connect` and `dictation_start` respond only once
  * connected or recording, so they are backgrounded and their stop commands can cancel them.
+ * `handoff` leaves the queue free for steering and `abort` while its compaction is preparing.
  * Response correlation is preserved via each command's `id`; ordering across
  * concurrent commands is not guaranteed and clients MUST match on `id`.
  *
  * @returns `undefined` when the frame was routed to a side-channel handler
  *   (extension UI response, host tool/URI frames) or dispatched in the
- *   background (`bash`, `predict_word`, `live_start`, `live_connect`, `dictation_start`, `prompt`, `steer`, `follow_up`, `steer_subagent`). Otherwise a promise that
+ *   background. Otherwise a promise that
  *   resolves once the response for the command has been emitted via `output`.
  *   Errors from `handleCommand` on a command dispatched inline propagate; the
  *   caller is expected to wrap them.
@@ -769,7 +770,8 @@ export function dispatchRpcInputFrame(parsed: unknown, deps: RpcInputFrameDeps):
 		command.type === "steer" ||
 		command.type === "dictation_start" ||
 		command.type === "follow_up" ||
-		command.type === "steer_subagent"
+		command.type === "steer_subagent" ||
+		command.type === "handoff"
 	) {
 		const task = (async () => {
 			try {
@@ -857,7 +859,7 @@ export class RpcUserInputGate {
 	}
 }
 
-/** Starts prompts, steers, follow-ups and `steer_subagent` after earlier ordinary commands, without
+/** Starts prompts, steers, follow-ups, `steer_subagent` and `handoff` after earlier ordinary commands, without
  * awaiting admission. Control frames, `bash` and `predict_word` dispatch immediately (see
  * dispatchRpcInputFrame). `acceptInput` runs synchronously in {@link dispatch}, before the
  * handler is queued, so an abort can invalidate a frame that has not started yet. */
@@ -885,8 +887,8 @@ export class RpcInputDispatcher {
 			const command = parsed as RpcCommand;
 			this.#acceptInput?.(command);
 			// Bash and predict_word retain their immediate side channel. Prompts,
-			// steers, follow-ups and steer_subagent start through the serial tail, but
-			// dispatchRpcInputFrame backgrounds their admission.
+			// steers, follow-ups, steer_subagent and handoff start through the serial tail,
+			// but dispatchRpcInputFrame doesn't await their responses.
 			if (BACKGROUND_COMMANDS.has(command.type)) {
 				dispatchRpcInputFrame(command, this.#deps);
 				return;
@@ -2889,7 +2891,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				}
 				// A manual compaction or handoff no longer holds the queue; branching under it would
 				// land its write in the new session file.
-				if (command.type === "branch" && (session.isCompacting || session.isGeneratingHandoff)) {
+				if (command.type === "branch" && (session.isCompacting || session.isBackgroundCompacting)) {
 					return error(id, "branch", new SessionBusyError("branch the session").message, "session_busy");
 				}
 				const requestedModel =
@@ -4213,7 +4215,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				// GUI mic dictation: the host ships a canonical 16 kHz mono PCM16
 				// WAV buffer (the STT pipeline's native rate — see the wire type).
 				try {
-					const { samples, sampleRate } = decodeWav(Buffer.from(command.audioBase64, "base64"));
+					const { samples, sampleRate } = decodeVoiceWav(Buffer.from(command.audioBase64, "base64"));
 					if (sampleRate !== 16_000) {
 						return error(
 							id,
@@ -4364,14 +4366,8 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 			}
 
 			case "handoff": {
-				// Resetting the agent mid-stream lets the live turn keep emitting into a
-				// session that handoff has already torn down. Refuse while a prompt is in
-				// flight (mirrors the TUI /handoff guard).
-				if (session.isStreaming) {
-					return error(id, "handoff", "Cannot hand off while a response is in progress");
-				}
-				const result = await session.handoff(command.customInstructions);
-				return success(id, "handoff", result ? { savedPath: result.savedPath } : null);
+				await session.compact(command.customInstructions, { mode: "handoff" });
+				return success(id, "handoff", {});
 			}
 
 			// =================================================================
@@ -5497,6 +5493,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 	// A backgrounded builtin (e.g. a /mcp reauth browser wait) must not park
 	// the drain: tear it down now that the client is gone.
 	abortBuiltinCommands("RPC client disconnected");
+	if (session.isBackgroundCompacting) session.abortCompaction("RPC client disconnected");
 	await shutdownCoordinator.drain();
 	subagentRegistry?.dispose();
 	await Promise.all([liveBridge.stop(), collabController.dispose()]);

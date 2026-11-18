@@ -35,7 +35,7 @@ export async function applyRpcSwitchLeaf(
 ): Promise<RpcSwitchLeafResult> {
 	// A manual compaction or handoff runs beside the serial queue and writes from the
 	// leaf it started on; moving the leaf under it would graft that write onto the new branch.
-	if (session.isCompacting || session.isGeneratingHandoff) throw new SessionBusyError("move to another point");
+	if (session.isCompacting || session.isBackgroundCompacting) throw new SessionBusyError("move to another point");
 	let result = await session.navigateTree(command.entryId, {
 		summarize: command.summarize,
 		customInstructions: command.customInstructions,
