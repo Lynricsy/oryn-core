@@ -138,9 +138,7 @@ import {
 } from "@oh-my-pi/pi-utils";
 import { writeArchive } from "@oh-my-pi/pi-utils/ar";
 import { frameDataBytesBudget, readerIncludesThinking } from "@oh-my-pi/snapcompact";
-import type { AdvisorConfig } from "@oh-my-pi/pi-tui/overlays/advisor-config";
 import { ASYNC_NOTIFY_MESSAGE_TYPE } from "@oh-my-pi/pi-tui/chat/messages";
-import { formatUsageResetWindow } from "@oh-my-pi/pi-tui/overlays/usage-display";
 import { loadAdvisorTranscriptCosts } from "../advisor";
 import {
 	ASYNC_JOB_MANAGER_SHUTDOWN_REASON,
