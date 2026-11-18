@@ -4486,10 +4486,12 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				// Closes the authorization-URL dialogs the host has not answered once the login ends.
 				const loginDone = new AbortController();
 				let authUrlId: string | undefined;
+				let authEmitted = false;
 				try {
 					await session.modelRegistry.authStorage.oauth.login(command.providerId, {
 						signal: cancel.signal,
 						onAuth: info => {
+							authEmitted = true;
 							authUrlId = requestRpcOpenUrl(pendingExtensionRequests, output, info, {
 								signal: loginDone.signal,
 								onDismiss: reason => cancel.abort(reason ?? new LoginCancelledError()),
@@ -4545,8 +4547,8 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 										"which is not supported in RPC mode. Use the terminal UI to log in.",
 								);
 							}
-							// Once its URL is up, only this answer moves the login on. Naming the
-							// URL lets a host show both together, not one behind the other.
+							// RPC hosts can render pre-auth prompts and associate post-auth
+							// prompts with the URL that awaits the user's response.
 							const value = await requestRpcInput(
 								pendingExtensionRequests,
 								output,
@@ -4554,7 +4556,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 								prompt.placeholder,
 								dialogOptions,
 								{
-									...(authUrlId ? { loginPromptFor: authUrlId } : {}),
+									...(authEmitted && authUrlId ? { loginPromptFor: authUrlId } : {}),
 									...(prompt.allowEmpty ? { allowEmpty: true } : {}),
 								},
 							);

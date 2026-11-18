@@ -38,6 +38,7 @@ import {
 	type AsideMessage,
 	type BeforeToolCallContext,
 	type BeforeToolCallResult,
+	lastContextMessage,
 	type QueuedMessagePreparation,
 	type QueuedMessageQueue,
 	resolveTelemetry,
@@ -137,8 +138,17 @@ import {
 } from "@oh-my-pi/pi-utils";
 import { writeArchive } from "@oh-my-pi/pi-utils/ar";
 import { frameDataBytesBudget, readerIncludesThinking } from "@oh-my-pi/snapcompact";
+import type { AdvisorConfig } from "@oh-my-pi/pi-tui/overlays/advisor-config";
+import { ASYNC_NOTIFY_MESSAGE_TYPE } from "@oh-my-pi/pi-tui/chat/messages";
+import { formatUsageResetWindow } from "@oh-my-pi/pi-tui/overlays/usage-display";
 import { loadAdvisorTranscriptCosts } from "../advisor";
-import { ASYNC_JOB_MANAGER_SHUTDOWN_REASON, type AsyncJob, AsyncJobManager, type AsyncJobManagerApi } from "../async";
+import {
+	ASYNC_JOB_MANAGER_SHUTDOWN_REASON,
+	type AsyncJob,
+	AsyncJobManager,
+	type AsyncJobManagerApi,
+	type NotifyBatch,
+} from "../async";
 import { planParallel } from "../auto-parallel/planner";
 import { classifyAutoPrewalk } from "../auto-prewalk/classifier";
 import { reset as resetCapabilities } from "../capability";
@@ -362,6 +372,7 @@ import {
 	buildAsyncResultBatchMessage,
 } from "./async-job-delivery";
 import { renderAttachmentSourceNotice } from "./attachment-source-notice";
+import { type AsyncNotifyEntry, type AsyncNotifySource, buildAsyncNotifyBatchMessage } from "./async-notify";
 import { type BashExecuteOptions, BashRunner, type BashRunnerHost } from "./bash-runner";
 import type { CacheWarmer, CacheWarmingMode, CacheWarmingStatus, PromptCacheEntry } from "./cache-warmer";
 import { type ChatConfig, chatHistoryLimit, saveChatConfig } from "./chat-session";
@@ -1207,6 +1218,8 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	#pendingNextTurnMessages: CustomMessage[] = [];
+	/** Rows kept out of context that arrived while a run was live; drawn and saved once it ends or the next prompt starts. */
+	#pendingExcludedRows: CustomMessage[] = [];
 	#scheduledHiddenNextTurnGeneration: number | undefined = undefined;
 	/** Queued messages a session path took out of the agent queues to put back later (follow-ups
 	 *  parked behind an IRC wake turn, a session switch's rollback snapshot), in queue order. */
@@ -1650,6 +1663,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		// settled without ever going live (setup failure, abort, disposal) —
 		// they re-check liveness and keep their content.
 		this.#wakeDispatchLiveWaiters();
+		this.#flushExcludedRows();
 		this.#settleInFlight();
 	}
 
@@ -1825,6 +1839,37 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		for (const record of records) {
 			this.agent.emitExternalEvent({ type: "message_start", message: record });
 			this.agent.emitExternalEvent({ type: "message_end", message: record });
+		}
+	}
+
+	/** Draw and save the rows kept out of context that a live run queued (see {@link #pendingExcludedRows}). */
+	#flushExcludedRows(): void {
+		if (this.#pendingExcludedRows.length === 0) return;
+		const connected = this.#unsubscribeAgent !== undefined;
+		// Rows land only at a turn boundary: mid-stream, their message_start would replace the live stream message.
+		if (connected && this.agent.state.isStreaming) return;
+		const rows = this.#pendingExcludedRows;
+		this.#pendingExcludedRows = [];
+		if (connected) {
+			this.#recordWithoutTurn(rows);
+			return;
+		}
+		// Disposal detaches last, after its drain: a row still queued then goes with the session.
+		if (this.#isDisposed) return;
+		// A transition (/new, a switch, /compact) disconnects before it aborts the run, so no handler would save
+		// or draw these events: record them directly in the transcript they were sent to, as bash rows are, so a
+		// transition that keeps it (compaction, a rolled-back switch) still shows them.
+		for (const row of rows) {
+			this.agent.appendMessage(row);
+			this.sessionManager.appendCustomMessageEntry(
+				row.customType,
+				row.content,
+				row.display,
+				row.details,
+				row.attribution,
+				row.timestamp,
+				true,
+			);
 		}
 	}
 
@@ -2700,6 +2745,17 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 				);
 			},
 		});
+		// Registered ahead of `launch-completion` and `async-result`: kinds drain in
+		// registration order, so a service's last matches read before its exit notice,
+		// and a job's before its result, when both inject at one boundary.
+		// A service belongs to a session id, as its completion does: its matches
+		// are dropped while another session holds the transcript.
+		this.yieldQueue.register<AsyncNotifyEntry>(ASYNC_NOTIFY_MESSAGE_TYPE, {
+			isStale: entry =>
+				this.#isDisposed ||
+				(entry.owner !== undefined && !isLaunchCompletionOwner(entry.owner, this.sessionManager.getSessionId())),
+			build: buildAsyncNotifyBatchMessage,
+		});
 		this.yieldQueue.register<LaunchCompletionEntry>(LAUNCH_COMPLETION_MESSAGE_TYPE, {
 			isStale: entry =>
 				this.#isDisposed || !isLaunchCompletionOwner(entry.owner, this.sessionManager.getSessionId()),
@@ -2710,13 +2766,15 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		// injection boundary; all but broadcasts and progress notes also expose a
 		// non-consuming interrupt peek so `wait` can return early before the boundary drains them.
 		this.agent.hasIrcInterrupts = () => this.#irc.hasInterrupts();
-		// Completion notices (finished background jobs, exited supervised
-		// processes) queue here for the same boundary; peeking them lets a
-		// `wait` return early rather than miss a queued completion. Entries
-		// consumed elsewhere since they queued (an eval cell awaiting the job)
-		// are dropped by the drain, so they must not cut a wait short.
+		// Background notices (finished background jobs, exited supervised
+		// processes, output a running job was asked to report) queue here for
+		// the same boundary; peeking them lets a `wait` return early rather than
+		// miss a queued notice. Entries consumed elsewhere since they queued (an
+		// eval cell awaiting the job) are dropped by the drain, so they must not
+		// cut a wait short.
 		this.agent.hasBackgroundCompletions = () =>
 			this.yieldQueue.hasDeliverable(LAUNCH_COMPLETION_MESSAGE_TYPE) ||
+			this.yieldQueue.hasDeliverable(ASYNC_NOTIFY_MESSAGE_TYPE) ||
 			this.yieldQueue.hasDeliverable(ASYNC_RESULT_MESSAGE_TYPE);
 		// Passive asides (`deliverAs: "aside"`) also end an interruptible `wait`
 		// instead of sitting behind it. Deferred wakes are not peeked: no
@@ -3829,11 +3887,13 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		const manager = this.#asyncJobManager;
 		manager?.cancelAll({ ownerId: this.#agentId }, reason);
 		manager?.evictCompletedJobs({ ownerId: this.#agentId });
-		// Invalidate this owner's in-flight/drained deliveries against the new
-		// generation, then drop any async-result follow-up already queued, so a
-		// prior session's background result cannot inject into the next transcript.
+		// Invalidate this owner's in-flight/drained deliveries and open notify
+		// channels against the new generation, then drop any follow-up already
+		// queued, so a prior session's background job cannot inject into the next
+		// transcript.
 		this.#asyncDeliveryEpoch += 1;
 		this.yieldQueue.clear("async-result");
+		this.yieldQueue.clear(ASYNC_NOTIFY_MESSAGE_TYPE);
 	}
 
 	/**
@@ -3888,6 +3948,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		// counting them would hold the run open against the very driver that parked them.
 		const queued =
 			this.yieldQueue.hasDeliverable(ASYNC_RESULT_MESSAGE_TYPE) ||
+			this.yieldQueue.hasDeliverable(ASYNC_NOTIFY_MESSAGE_TYPE) ||
 			this.yieldQueue.hasDeliverable(LAUNCH_COMPLETION_MESSAGE_TYPE) ||
 			this.#irc.hasWakeable() ||
 			this.#ircWakesAwaitingCompaction > 0;
@@ -4703,6 +4764,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 					// otherwise records emission time, which on rebuild excludes
 					// provider preparation / hook time from the prompt→yield anchor.
 					message.timestamp,
+					message.role === "custom" ? message.excludeFromContext : undefined,
 				);
 				this.#persistedEntryIds.set(message, entryId);
 			}
@@ -7478,6 +7540,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		// its record instead of landing here (mirrors newSession()).
 		this.#sessionGeneration++;
 		this.#pendingNextTurnMessages = [];
+		this.#pendingExcludedRows = [];
 		this.#experimentalContextNotesReminder = undefined;
 		this.#scheduledHiddenNextTurnGeneration = undefined;
 		// Reset the session_stop continuation chain: the queued continuation
@@ -9980,6 +10043,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			// Flush any pending bash messages before the new prompt
 			await this.#bash.flushPending();
 			this.#eval.flushPending();
+			this.#flushExcludedRows();
 			// This turn carries the assignment: IRC asides parked for it fold in ahead of the message.
 			this.#ircAwaitingAssignment = false;
 			this.#irc.flushPending();
@@ -11048,15 +11112,43 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		if (this.#advisors.autoResumeSuppressed) return false;
 		// Follow-up-only resume has no steer to inject, so Agent.continue() continues from the
 		// existing context tail — which must itself be a valid provider tail. An injected
-		// non-conversational tail (advisor card → `developer`, bash/python execution) would make
-		// the first model call invalid, so leave the follow-up queued for the next explicit resume.
-		const messages = this.agent.state.messages;
-		const last = messages[messages.length - 1];
+		// non-conversational tail (advisor card → `developer`, a `!` bash/python run sent to the model)
+		// would make the first model call invalid, so leave the follow-up queued for the next explicit
+		// resume. Rows kept out of context (`!!` runs, excluded extension rows) never reach the model,
+		// so they do not count as the tail.
+		const last = lastContextMessage(this.agent.state.messages);
 		return last?.role === "assistant" || last?.role === "toolResult";
 	}
 
 	queueDeferredMessage(message: CustomMessage): void {
 		this.#queueHiddenNextTurnMessage(message, true);
+	}
+
+	/**
+	 * Opens the channel for the `notify` matches of a background job this session
+	 * started. Each batch sent through it queues as an `async-notify` notice and
+	 * is delivered like the job's result: it starts a turn when the session is
+	 * idle, injects between requests otherwise, and ends a blocked `wait`. The
+	 * channel belongs to the transcript the job started in: once a session
+	 * transition replaces it, or the session is disposed, batches are dropped.
+	 */
+	openAsyncNotify(job: AsyncNotifySource): (batch: NotifyBatch) => void {
+		const epoch = this.#asyncDeliveryEpoch;
+		return batch => {
+			if (this.#isDisposed || epoch !== this.#asyncDeliveryEpoch) return;
+			this.yieldQueue.enqueue<AsyncNotifyEntry>(ASYNC_NOTIFY_MESSAGE_TYPE, { ...job, ...batch });
+		};
+	}
+
+	/**
+	 * Queues one batch of `notify` matches from a supervised service, delivered
+	 * like {@link openAsyncNotify}'s. A service outlives transcripts, so the
+	 * batch names the session id that owns it (`entry.owner`) and is dropped
+	 * unless that session holds the transcript when the notice is built.
+	 */
+	queueServiceNotify(entry: AsyncNotifyEntry): void {
+		if (this.#isDisposed) return;
+		this.yieldQueue.enqueue<AsyncNotifyEntry>(ASYNC_NOTIFY_MESSAGE_TYPE, entry);
 	}
 
 	queueLaunchCompletion(notification: DaemonCompletionNotification): Promise<void> {
@@ -11324,6 +11416,9 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	 * - Not streaming + no trigger: appends to state/session, no turn; with the default delivery
 	 *   (no deliverAs) a display:true message also paints to the interactive transcript
 	 *   immediately (message_start/message_end, no turn)
+	 * - `excludeFromContext`: never starts or extends a turn (`triggerTurn` and `aside` are ignored);
+	 *   while streaming, including prompt setup, it is queued like a `!!` bash row and drawn and
+	 *   saved when the run ends, the next prompt starts, or the session changes
 	 *
 	 * @returns true iff this call synchronously started a new turn (awaited
 	 * `agent.prompt`); false when the message was queued/appended without a turn
@@ -11424,9 +11519,25 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			display: normalizedPayload.display,
 			details,
 			attribution: normalizedPayload.attribution,
+			excludeFromContext: normalizedPayload.excludeFromContext,
 			timestamp: Date.now(),
 		};
 		const normalizedAppMessage = await this.#normalizeAgentMessageImages(appMessage);
+		if (normalizedAppMessage.excludeFromContext) {
+			// The model never sees this row, so it must not start or extend a turn: a steer or aside would
+			// buy a provider call on unchanged context. Mid-run (prompt setup included) it is queued like
+			// a `!!` bash row and drawn and saved when the run ends or the next prompt starts; idle it is
+			// appended where the caller asked.
+			if (this.isStreaming) {
+				this.#pendingExcludedRows.push(normalizedAppMessage);
+				return false;
+			}
+			options = {
+				...options,
+				triggerTurn: false,
+				deliverAs: options?.deliverAs === "nextTurn" ? "nextTurn" : undefined,
+			};
+		}
 		if (this.isStreaming) {
 			// Queued into a turn the agent owns: that turn holds the session. Busy only
 			// from another prompt's setup claims nothing (that prompt decides).
@@ -11473,6 +11584,8 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 				normalizedAppMessage.display,
 				normalizedAppMessage.details,
 				normalizedAppMessage.attribution,
+				normalizedAppMessage.timestamp,
+				normalizedAppMessage.excludeFromContext,
 			);
 			return false;
 		}
@@ -11535,6 +11648,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			// Its own timestamp, as `#persistMessageEnd` keeps one: a view rebuilt while its events are
 			// queued matches the entry to them by it.
 			normalizedAppMessage.timestamp,
+			normalizedAppMessage.excludeFromContext,
 		);
 		if (normalizedAppMessage.display === true) {
 			// Idle display append with no turn: notify session listeners so the interactive
@@ -13056,6 +13170,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		this.#cancelOwnAsyncJobs();
 		this.#closeAllProviderSessions("new session");
 		await this.#bash.flushPending();
+		this.#flushExcludedRows();
 		const bashTransition = this.#bash.beginSessionTransition({
 			persistDetached: options?.drop !== true,
 		});
@@ -13113,6 +13228,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			this.#memory.rekeyForCurrentSessionId();
 			await this.#memory.resetContextForNewTranscript();
 			this.#pendingNextTurnMessages = [];
+			this.#pendingExcludedRows = [];
 			// The abort above may have skipped the loop's final aside poll (issue: stranded
 			// asides survive an aborted turn by design so a resumed session can still see
 			// them); discard here so they cannot leak into the new session's transcript via
@@ -13177,6 +13293,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	/** Write pending bash output and every session entry to the session file, as {@link fork} does before copying it. */
 	async flushToDisk(): Promise<void> {
 		await this.#bash.flushPending();
+		this.#flushExcludedRows();
 		await this.sessionManager.flush();
 	}
 
@@ -14848,6 +14965,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		await this.#sessionBeforeSwitchReconciler?.();
 
 		await this.#bash.flushPending();
+		this.#flushExcludedRows();
 		// Flush pending writes before switching so restore snapshots reflect committed state.
 		await this.sessionManager.flush();
 		const previousSessionState = this.sessionManager.captureState();
@@ -14909,6 +15027,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		const previousSessionGenerationSettled = this.#sessionGenerationSettled;
 		this.#sessionGenerationSettled = generationSettled.promise;
 		this.#pendingNextTurnMessages = [];
+		this.#pendingExcludedRows = [];
 		this.#scheduledHiddenNextTurnGeneration = undefined;
 		this.#queuedMessageDrainBlocked = false;
 		this.#usagePreflightReadyForNextModelCall = false;
@@ -15326,6 +15445,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		}
 
 		await this.#bash.flushPending();
+		this.#flushExcludedRows();
 		// Flush pending writes before branching
 		await this.sessionManager.flush();
 		// Last refusal point. Nothing below is rolled back when the transition stops, so an
@@ -15335,6 +15455,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 
 		// Clear pending messages (bound to old session state)
 		this.#pendingNextTurnMessages = [];
+		this.#pendingExcludedRows = [];
 		this.#scheduledHiddenNextTurnGeneration = undefined;
 		this.#queuedMessageDrainBlocked = false;
 		this.#usagePreflightReadyForNextModelCall = false;
@@ -15469,6 +15590,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		this.#assertIdleForSnapshot("branch /btw");
 
 		this.#pendingNextTurnMessages = [];
+		this.#pendingExcludedRows = [];
 		this.#scheduledHiddenNextTurnGeneration = undefined;
 		this.#releaseQueuedTtsrReservations();
 		this.agent.replaceQueues([], []);
@@ -15594,6 +15716,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		if (queued) return queued;
 		using _transition = this.#beginSessionTransition();
 		await this.#bash.flushPending();
+		this.#flushExcludedRows();
 		const oldLeafId = this.sessionManager.getLeafId();
 
 		const targetEntry = this.sessionManager.getEntry(targetId);

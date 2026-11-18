@@ -5,6 +5,7 @@ import {
 	type Agent,
 	type AgentMessage,
 	type AgentTurnEndContext,
+	lastContextIndex,
 	type MessageCountOptions,
 	resolveTelemetry,
 	type StreamFn,
@@ -6414,7 +6415,9 @@ export class SessionMaintenance {
 
 		if (willRetry) {
 			const messages = this.#host.agent.state.messages;
-			const lastMsg = messages[messages.length - 1];
+			// Rows kept out of context may trail the failed turn; they stay, the turn goes.
+			const lastIndex = lastContextIndex(messages);
+			const lastMsg = messages[lastIndex];
 			if (lastMsg?.role === "assistant") {
 				const lastAssistant = lastMsg as AssistantMessage;
 				// Drop the prior turn before retry when it carries no actionable deliverable:
@@ -6425,7 +6428,7 @@ export class SessionMaintenance {
 					lastAssistant.stopReason === "error" ||
 					(reason === "incomplete" && lastAssistant.stopReason === "length");
 				if (shouldDrop) {
-					this.#host.agent.replaceMessages(messages.slice(0, -1));
+					this.#host.agent.replaceMessages(messages.toSpliced(lastIndex, 1));
 					this.#host.rebaseAfterCompaction();
 				}
 			}
@@ -6633,13 +6636,14 @@ export class SessionMaintenance {
 				// assistant from the failed turn re-enters agent state — drop it before
 				// retrying, same as the context-full tail.
 				const messages = this.#host.agent.state.messages;
-				const lastMsg = messages[messages.length - 1];
+				const lastIndex = lastContextIndex(messages);
+				const lastMsg = messages[lastIndex];
 				if (lastMsg?.role === "assistant") {
 					const lastAssistant = lastMsg as AssistantMessage;
 					const shouldDrop =
 						lastAssistant.stopReason === "error" ||
 						(reason === "incomplete" && lastAssistant.stopReason === "length");
-					if (shouldDrop) this.#host.agent.replaceMessages(messages.slice(0, -1));
+					if (shouldDrop) this.#host.agent.replaceMessages(messages.toSpliced(lastIndex, 1));
 				}
 				this.#host.scheduleAgentContinue({
 					source: "shake-retry",
