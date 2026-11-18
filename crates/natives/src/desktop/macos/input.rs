@@ -5633,7 +5633,7 @@ mod tests {
 	type LayoutRead = CoreResult<Option<fn(char) -> Option<Keystroke>>>;
 
 	#[test]
-	fn local_text_stays_unicode_on_key_zero_and_only_a_remote_screen_gets_layout_keys() {
+	fn local_text_uses_unicode_and_return_without_reading_the_keyboard_layout() {
 		let no_layout = || -> LayoutRead { panic!("local text reads no keyboard layout") };
 		let window = screen_sharing();
 		let local = keys_for(&window, "aB\n", None, no_layout).unwrap();
@@ -5651,16 +5651,16 @@ mod tests {
 			},
 		)
 		.unwrap();
-		// No Shift for B, and a newline is text rather than a Return press.
+		// Printable text needs no modifiers; web content receives a real Return.
 		let (down, up) = (CGEventType::KeyDown.0, CGEventType::KeyUp.0);
-		let key = |kind, text: &str| (kind, 0, CGEventFlags::empty(), text.to_string());
+		let key = |kind, code, text: &str| (kind, code, CGEventFlags::empty(), text.to_string());
 		assert_eq!(events, [
-			key(down, "a"),
-			key(up, "a"),
-			key(down, "B"),
-			key(up, "B"),
-			key(down, "\n"),
-			key(up, "\n"),
+			key(down, 0, "a"),
+			key(up, 0, "a"),
+			key(down, 0, "B"),
+			key(up, 0, "B"),
+			key(down, i64::from(RETURN), "\n"),
+			key(up, i64::from(RETURN), "\n"),
 		]);
 		let stroke = |code, shift| Keystroke { code, shift, option: false };
 		let remote = keys_for(&window, "aB\n", Some(RemoteScreen::KeyEvents), || Ok(Some(us_stroke)));
@@ -5848,7 +5848,7 @@ mod tests {
 	#[test]
 	fn typed_text_reaches_the_target_whole_as_unicode_payloads() {
 		// Control characters, a ZWJ emoji, and a grapheme longer than one
-		// event's 20 UTF-16 units all ride as payloads; none has a key.
+		// event's 20 UTF-16 units must all survive the event sequence.
 		let text = format!("a\tb\n\u{1b}👨‍👩‍👧‍👦e{}é", "\u{301}".repeat(24));
 		let no_layout = || -> LayoutRead { panic!("local text reads no keyboard layout") };
 		let keys = keys_for(&screen_sharing(), &text, None, no_layout).unwrap();
@@ -5868,11 +5868,19 @@ mod tests {
 		let (down, up) = (CGEventType::KeyDown.0, CGEventType::KeyUp.0);
 		let mut typed = String::new();
 		for pair in events.chunks(2) {
-			let [(press_kind, 0, false, false, press), (release_kind, 0, false, false, release)] =
-				pair
+			let [
+				(press_kind, press_code, false, false, press),
+				(release_kind, release_code, false, false, release),
+			] = pair
 			else {
-				panic!("expected an unmodified key-0 press and release, got {pair:?}");
+				panic!("expected an unmodified press and release, got {pair:?}");
 			};
+			let code = match press.as_str() {
+				"\t" => i64::from(TAB),
+				"\n" => i64::from(RETURN),
+				_ => 0,
+			};
+			assert_eq!((*press_code, *release_code), (code, code));
 			assert_eq!((*press_kind, *release_kind), (down, up), "{pair:?}");
 			assert_eq!(press, release);
 			assert!(press.encode_utf16().count() <= MAX_EVENT_UNITS, "{press:?}");

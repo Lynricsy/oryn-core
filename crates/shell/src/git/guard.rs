@@ -1617,7 +1617,7 @@ mod tests {
 		let parent = repo.parent().expect("fixture parent").to_owned();
 		let (bare, worktree) = (parent.join("bare.git"), parent.join("main"));
 		git(&parent, &["clone", "-q", "--bare", &repo.to_string_lossy(), "bare.git"]);
-		git(&bare, &["worktree", "add", "-q", &worktree.to_string_lossy(), "main"]);
+		git(&bare, &["--git-dir=.", "worktree", "add", "-q", &worktree.to_string_lossy(), "main"]);
 		std::fs::write(worktree.join("tracked.txt"), "mine\n").expect("edit");
 		let (code, output) =
 			guarded(&worktree, "PI_GIT_GUARD_OVNFS=ovnfs git checkout tracked.txt").await;

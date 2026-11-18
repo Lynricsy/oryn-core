@@ -21,6 +21,25 @@ use std::{
 
 use crate::obash_support::{command, finish, obash};
 
+fn sample_corpus(stride: usize, limit: usize) -> Vec<String> {
+	let mut files: Vec<_> = corpus().into_iter().step_by(stride).take(limit).collect();
+	// The digest cases exercise option switches between input files, even on
+	// hosts without a separate zsh source tree or user-installed themes.
+	let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/testkit/fixtures/zcompile");
+	for name in ["simple", "funcs", "compound", "redir", "cond"] {
+		if files.len() >= limit.min(5) {
+			break;
+		}
+		files.push(
+			fixtures
+				.join(format!("{name}.zsh"))
+				.to_string_lossy()
+				.into_owned(),
+		);
+	}
+	files
+}
+
 /// Whether `/bin/zsh` is the oracle.
 fn have_zsh() -> bool {
 	let Ok(out) = Command::new("/bin/zsh").arg("--version").output() else {
@@ -223,7 +242,7 @@ fn zcompile_digest_and_listing_match_zsh() {
 	if !have_zsh() {
 		return;
 	}
-	let files: Vec<String> = corpus().into_iter().step_by(131).take(12).collect();
+	let files = sample_corpus(131, 12);
 	let mut outs = Vec::new();
 	for real in [true, false] {
 		let dir = scratch(if real { "digest-real" } else { "digest-ours" });
@@ -252,7 +271,7 @@ fn zcompile_lists_dumps_zsh_wrote() {
 	if !have_zsh() {
 		return;
 	}
-	let files: Vec<String> = corpus().into_iter().step_by(211).take(5).collect();
+	let files = sample_corpus(211, 5);
 	let dir = scratch("list");
 	let d = dir.join("x.zwc").display().to_string();
 	let (_, err, st) = run(true, &format!("zcompile -M {d} \"$@\""), &files);
