@@ -143,7 +143,7 @@
 			},
 			{
 				"name": "set_fast_mode",
-				"doc": "Enable or disable fast mode for the session.",
+				"doc": "Set Fast or, when the model supports it, Ultrafast serving for the session.",
 				"params": "SetFastModeParams",
 				"result": "FastModeResult",
 				"nullable": false,
@@ -843,6 +843,39 @@
 				"result": "GetBtwHistoryResult",
 				"nullable": false,
 				"unwrap": "records",
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "composer_prediction_request",
+				"doc": "Predict the user's next message for the run that just finished; the alternatives arrive as a `composer_prediction` frame. A no-op when composer.predictions is off or the session is busy.",
+				"params": null,
+				"result": null,
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "composer_prediction_feedback",
+				"doc": "Report the current composer prediction as shown, inserted (`rank`: the alternative used), or dismissed; dismissing aborts a request still running.",
+				"params": "ComposerPredictionFeedbackParams",
+				"result": null,
+				"nullable": false,
+				"unwrap": null,
+				"timeoutMs": null,
+				"completion": null,
+				"clientOmit": []
+			},
+			{
+				"name": "abort_compaction",
+				"doc": "Cancel a running manual compaction, a background handoff included, without stopping the live turn; false when none was running.",
+				"params": null,
+				"result": "AbortCompactionResult",
+				"nullable": false,
+				"unwrap": "aborted",
 				"timeoutMs": null,
 				"completion": null,
 				"clientOmit": []
@@ -2668,6 +2701,10 @@
 					"type": "boolean",
 					"default": false
 				},
+				"isBackgroundCompacting": {
+					"type": "boolean",
+					"default": false
+				},
 				"steeringMode": {
 					"$ref": "#/$defs/QueueMode",
 					"default": "one-at-a-time"
@@ -2695,6 +2732,10 @@
 					"default": false
 				},
 				"fastModeActive": {
+					"type": "boolean",
+					"default": false
+				},
+				"fastModeUltrafast": {
 					"type": "boolean",
 					"default": false
 				},
@@ -2935,6 +2976,9 @@
 					"type": "boolean"
 				},
 				"active": {
+					"type": "boolean"
+				},
+				"ultrafast": {
 					"type": "boolean"
 				}
 			},
@@ -6908,6 +6952,9 @@
 			"properties": {
 				"enabled": {
 					"type": "boolean"
+				},
+				"ultrafast": {
+					"type": "boolean"
 				}
 			},
 			"required": [
@@ -7950,6 +7997,36 @@
 			},
 			"required": [
 				"records"
+			]
+		},
+		"ComposerPredictionFeedbackParams": {
+			"type": "object",
+			"properties": {
+				"action": {
+					"enum": [
+						"shown",
+						"accepted",
+						"dismissed"
+					],
+					"type": "string"
+				},
+				"rank": {
+					"type": "integer"
+				}
+			},
+			"required": [
+				"action"
+			]
+		},
+		"AbortCompactionResult": {
+			"type": "object",
+			"properties": {
+				"aborted": {
+					"type": "boolean"
+				}
+			},
+			"required": [
+				"aborted"
 			]
 		}
 	}

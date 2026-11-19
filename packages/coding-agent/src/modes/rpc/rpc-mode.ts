@@ -115,6 +115,7 @@ import { isRpcHostUriResult, RpcHostUriBridge } from "./host-uris";
 import { applyRpcHookEnabled, applyRpcMcpAction, applyRpcPluginEnabled, applyRpcSkillEnabled } from "./rpc-actions";
 import { applyRpcAbortSubagent, applyRpcReviveSubagent, buildRpcAgentDefinitions } from "./rpc-agents";
 import { RpcBtwController } from "./rpc-btw";
+import { RpcComposerPrediction } from "./rpc-composer-prediction";
 import { isReadOnlyCollabCommand, RpcCollabController } from "./rpc-collab";
 import { RpcHostDictationBridge } from "./rpc-host-dictation";
 import { selectRpcEntries } from "./rpc-compat";
@@ -219,6 +220,7 @@ import {
 	shareRpcSession,
 } from "./rpc-reports";
 import {
+	applyRpcAbortCompaction,
 	applyRpcFresh,
 	applyRpcGetForceTool,
 	applyRpcReloadPlugins,
@@ -691,6 +693,8 @@ const BACKGROUND_COMMANDS: ReadonlySet<string> = new Set<RpcCommand["type"]>([
 	"tui_open",
 	"terminal_snapshot",
 	"abort_branch_summary",
+	// Runs beside a background handoff instead of queueing behind it.
+	"abort_compaction",
 ]);
 
 /**
@@ -1924,6 +1928,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 	const extensionUserMessageTracker = new RpcExtensionUserMessageTracker();
 	const wordPredictor = new RpcWordPredictor();
 	const btw = new RpcBtwController(session, output);
+	const composerPrediction = new RpcComposerPrediction(session, output);
 	// A continuation abandoned while waiting leaves nothing to end the activity stretch: re-check settlement.
 	const goalController = new RpcGoalController(session, () => void settleWatcher.check());
 	// A scheduled or held goal turn will start a turn: every settle report treats it as busy,
@@ -3037,6 +3042,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					availableThinkingLevels: [...session.getAvailableThinkingLevels()],
 					isStreaming: session.isStreaming,
 					isCompacting: session.isCompacting,
+					isBackgroundCompacting: session.isBackgroundCompacting,
 					steeringMode: session.steeringMode,
 					followUpMode: session.followUpMode,
 					interruptMode: session.interruptMode,
@@ -3059,6 +3065,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					fastModeEnabled: session.isFastModeEnabled(),
 					tokensPerSecond: calculateTokensPerSecond(session.messages, session.isStreaming),
 					fastModeActive: session.isFastModeActive(),
+					fastModeUltrafast: session.isUltrafastModeEnabled(),
 					slowModeSupported: session.isSlowModeSupported(),
 					slowModeEnabled: session.isSlowModeEnabled(),
 					slowModeScope: session.getSlowModeScope(),
@@ -3083,13 +3090,27 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 			}
 
 			case "set_fast_mode": {
-				const supported = session.setFastMode(command.enabled);
+				if (
+					typeof command.enabled !== "boolean" ||
+					(command.ultrafast !== undefined && typeof command.ultrafast !== "boolean") ||
+					(command.ultrafast && !command.enabled)
+				) {
+					return error(id, "set_fast_mode", "Ultrafast requires an enabled fast mode.");
+				}
+				const supported = command.ultrafast ? session.setUltrafastMode(true) : session.setFastMode(command.enabled);
 				if (command.enabled && !supported) {
-					return error(id, "set_fast_mode", "Fast mode is unavailable for the current model.");
+					return error(
+						id,
+						"set_fast_mode",
+						command.ultrafast
+							? "Ultrafast is unavailable for the current model."
+							: "Fast mode is unavailable for the current model.",
+					);
 				}
 				return success(id, "set_fast_mode", {
 					enabled: session.isFastModeEnabled(),
 					active: session.isFastModeActive(),
+					ultrafast: session.isUltrafastModeEnabled(),
 				});
 			}
 
@@ -4664,6 +4685,26 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 
 			case "get_btw_history":
 				return success(id, "get_btw_history", { records: await btw.history() });
+
+			case "composer_prediction_request":
+				composerPrediction.request();
+				return success(id, "composer_prediction_request");
+
+			case "composer_prediction_feedback": {
+				const { action, rank } = command;
+				if (action !== "shown" && action !== "accepted" && action !== "dismissed") {
+					return error(id, "composer_prediction_feedback", 'action must be "shown", "accepted" or "dismissed"');
+				}
+				if (rank !== undefined && !(Number.isInteger(rank) && rank >= 0)) {
+					return error(id, "composer_prediction_feedback", "rank must be a non-negative integer");
+				}
+				composerPrediction.feedback(action, rank);
+				return success(id, "composer_prediction_feedback");
+			}
+
+			case "abort_compaction":
+				// Only compaction stops here; a live turn beside a background handoff keeps streaming.
+				return success(id, "abort_compaction", { aborted: applyRpcAbortCompaction(session) });
 
 			// =================================================================
 			// Extension Features (usage / settings / providers)

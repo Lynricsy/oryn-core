@@ -495,6 +495,7 @@ export interface SessionState {
 	thinkingLevel?: ThinkingLevel;
 	isStreaming?: boolean;
 	isCompacting?: boolean;
+	isBackgroundCompacting?: boolean;
 	steeringMode?: QueueMode;
 	followUpMode?: QueueMode;
 	interruptMode?: InterruptMode;
@@ -503,6 +504,7 @@ export interface SessionState {
 	autoCompactionEnabled?: boolean;
 	fastModeEnabled?: boolean;
 	fastModeActive?: boolean;
+	fastModeUltrafast?: boolean;
 	/** `/slow` applies to the active model. */
 	slowModeSupported?: boolean;
 	/** `/slow` is on for the active model; always `false` when `slowModeSupported` is `false`. */
@@ -577,6 +579,7 @@ export interface LineRange {
 export interface FastModeResult {
 	enabled: boolean;
 	active: boolean;
+	ultrafast?: boolean;
 }
 
 export interface CompactionResult {
@@ -1779,6 +1782,7 @@ export interface OpenSessionParams {
 
 export interface SetFastModeParams {
 	enabled: boolean;
+	ultrafast?: boolean;
 }
 
 export interface SetSlowModeParams {
@@ -2129,6 +2133,15 @@ export interface GetBtwHistoryResult {
 	records: BtwHistoryRecord[];
 }
 
+export interface ComposerPredictionFeedbackParams {
+	action: "shown" | "accepted" | "dismissed";
+	rank?: number;
+}
+
+export interface AbortCompactionResult {
+	aborted: boolean;
+}
+
 /** Every RPC command's parameters and successful response `data`. */
 export interface RpcWireCommands {
 	negotiate_protocol: { params: NegotiateProtocolParams; result: NegotiateProtocolResult };
@@ -2207,4 +2220,7 @@ export interface RpcWireCommands {
 	btw: { params: BtwParams; result: BtwResult };
 	btw_cancel: { params: BtwCancelParams; result: BtwCancelResult };
 	get_btw_history: { params: undefined; result: GetBtwHistoryResult };
+	composer_prediction_request: { params: undefined; result: undefined };
+	composer_prediction_feedback: { params: ComposerPredictionFeedbackParams; result: undefined };
+	abort_compaction: { params: undefined; result: AbortCompactionResult };
 }

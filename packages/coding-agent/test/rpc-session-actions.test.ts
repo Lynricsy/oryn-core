@@ -9,6 +9,7 @@ import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { MCPManager } from "@oh-my-pi/pi-coding-agent/mcp";
 import { RpcPlanApprovalController } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-plan";
 import {
+	applyRpcAbortCompaction,
 	applyRpcFresh,
 	applyRpcGetForceTool,
 	applyRpcReloadPlugins,
@@ -131,6 +132,25 @@ describe("applyRpcFresh", () => {
 	it("returns undefined while the session is busy (caller's busy refusal)", () => {
 		vi.spyOn(session, "freshSession").mockReturnValue(undefined);
 		expect(applyRpcFresh(session)).toBeUndefined();
+	});
+});
+
+describe("applyRpcAbortCompaction", () => {
+	const fakeSession = (state: { isCompacting: boolean; isBackgroundCompacting: boolean }) => {
+		const abortCompaction = vi.fn();
+		return { session: { ...state, abortCompaction }, abortCompaction };
+	};
+
+	it("cancels a background handoff, which is not a blocking compaction", () => {
+		const { session, abortCompaction } = fakeSession({ isCompacting: false, isBackgroundCompacting: true });
+		expect(applyRpcAbortCompaction(session)).toBe(true);
+		expect(abortCompaction).toHaveBeenCalledTimes(1);
+	});
+
+	it("reports false and aborts nothing when no compaction runs", () => {
+		const { session, abortCompaction } = fakeSession({ isCompacting: false, isBackgroundCompacting: false });
+		expect(applyRpcAbortCompaction(session)).toBe(false);
+		expect(abortCompaction).not.toHaveBeenCalled();
 	});
 });
 

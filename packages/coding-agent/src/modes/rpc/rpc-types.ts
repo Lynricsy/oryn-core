@@ -125,7 +125,7 @@ export type RpcCommand =
 
 	// State
 	| { id?: string; type: "get_state" }
-	| { id?: string; type: "set_fast_mode"; enabled: boolean }
+	| { id?: string; type: "set_fast_mode"; enabled: boolean; ultrafast?: boolean }
 	| { id?: string; type: "set_slow_mode"; enabled: boolean }
 	| {
 			id?: string;
@@ -708,7 +708,12 @@ export type RpcCommand =
 	| { id?: string; type: "btw"; question: string; recordId?: string }
 	| { id?: string; type: "btw_cancel"; recordId?: string }
 	| { id?: string; type: "btw_inject"; recordId: string }
-	| { id?: string; type: "get_btw_history" };
+	| { id?: string; type: "get_btw_history" }
+	// Composer predictions; alternatives arrive as `composer_prediction` frames
+	| { id?: string; type: "composer_prediction_request" }
+	| { id?: string; type: "composer_prediction_feedback"; action: RpcComposerPredictionFeedback; rank?: number }
+	// Cancel a manual compaction (a background handoff included) and keep the live turn
+	| { id?: string; type: "abort_compaction" };
 
 // ============================================================================
 // RPC State
@@ -724,6 +729,8 @@ export interface RpcSessionState {
 	availableThinkingLevels?: ThinkingLevel[];
 	isStreaming: boolean;
 	isCompacting: boolean;
+	/** Manual compaction that prepares without blocking the current turn. */
+	isBackgroundCompacting?: boolean;
 	steeringMode: "all" | "one-at-a-time";
 	followUpMode: "all" | "one-at-a-time";
 	interruptMode: "immediate" | "wait";
@@ -735,6 +742,8 @@ export interface RpcSessionState {
 	autoRetryEnabled: boolean;
 	fastModeEnabled: boolean;
 	fastModeActive: boolean;
+	/** Fast mode runs at the model's Ultrafast tier; absent from hosts that predate it. */
+	fastModeUltrafast?: boolean;
 	/** `/slow` applies to the active model (flex tier on OpenAI/Google, low priority on Claude subscriptions). */
 	slowModeSupported: boolean;
 	/** `/slow` is on for the active model; always `false` when `slowModeSupported` is `false`. */
@@ -2441,7 +2450,7 @@ export type RpcResponse =
 			type: "response";
 			command: "set_fast_mode";
 			success: true;
-			data: { enabled: boolean; active: boolean };
+			data: { enabled: boolean; active: boolean; ultrafast: boolean };
 	  }
 	| {
 			id?: string;
@@ -3793,6 +3802,9 @@ export type RpcResponse =
 			success: true;
 			data: { records: readonly RpcBtwHistoryRecord[] };
 	  }
+	| { id?: string; type: "response"; command: "composer_prediction_request"; success: true }
+	| { id?: string; type: "response"; command: "composer_prediction_feedback"; success: true }
+	| { id?: string; type: "response"; command: "abort_compaction"; success: true; data: { aborted: boolean } }
 
 	// Error response (any command can fail); `code` is an optional machine-readable reason.
 	| {
@@ -3834,6 +3846,18 @@ export interface RpcBtwDeltaFrame {
 export interface RpcBtwRecordFrame {
 	type: "btw_record";
 	record: RpcBtwHistoryRecord;
+}
+
+/** How the host used the composer prediction it was offered. */
+export type RpcComposerPredictionFeedback = "shown" | "accepted" | "dismissed";
+
+/**
+ * The composer prediction for the conversation as it stands: the user's likely next message,
+ * most likely first. Empty when a prediction was withdrawn (dismissed, or the conversation moved on).
+ */
+export interface RpcComposerPredictionFrame {
+	type: "composer_prediction";
+	choices: string[];
 }
 
 // ============================================================================

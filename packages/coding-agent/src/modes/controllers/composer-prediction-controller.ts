@@ -77,7 +77,14 @@ interface Prediction {
 	rank: number | undefined;
 }
 
-type PredictionContext = Pick<InteractiveModeContext, "settings" | "viewSession" | "focusedAgentId" | "editor" | "ui">;
+/**
+ * What the controller reads from its host: the interactive TUI, or an RPC host that keeps its own
+ * composer (which asks only while its draft is empty and repaints on the `composer_prediction` frame).
+ */
+export type PredictionContext = Pick<InteractiveModeContext, "settings" | "viewSession" | "focusedAgentId"> & {
+	editor: Pick<InteractiveModeContext["editor"], "getText">;
+	ui: Pick<InteractiveModeContext["ui"], "requestRender">;
+};
 
 /**
  * Normalize a prediction reply to the single line the composer shows, or
