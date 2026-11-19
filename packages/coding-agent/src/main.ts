@@ -2440,7 +2440,7 @@ export async function runRootCommand(
 			options.tuiTranscript = isInteractive;
 			// An rpc-ui host shows session titles, as the TUI does, and has no way to name a session itself.
 			options.autoTitle = isInteractive || mode === "rpc-ui";
-			options.deferSkillDescriptionCompression = isInteractive;
+			options.deferHintCompression = isInteractive;
 			options.settings = settingsInstance;
 			options.telemetry = startupTelemetry;
 			options.topLevelExtensions = startupTopLevelExtensions;
@@ -2787,7 +2787,7 @@ export async function runRootCommand(
 						.catch(error => logger.warn("Startup changelog failed", { error: String(error) }));
 				}
 				void session.loadDeferredExtensions();
-				session.startSkillDescriptionCompression();
+				session.startHintCompression();
 				modelRegistry.refreshInBackground();
 				session.validateRetryFallbackChains();
 				if (configuredScope.length > 0) {
