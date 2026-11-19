@@ -3738,6 +3738,11 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		return this.#planModeState?.enabled ? title => this.preparePlanForReview(title) : undefined;
 	}
 
+	/** True when a host installed a handler, as opposed to the review fallback {@link peekPlanProposalHandler} supplies. */
+	hasPlanProposalHandler(): boolean {
+		return this.#planProposalHandler !== undefined;
+	}
+
 	/** The handler can ask the user to approve the plan mid-turn (ACP), so it runs as a {@link waitForUser}. */
 	setPlanProposalHandler(handler: PlanProposalHandler | null): void {
 		this.#planProposalHandler = handler ? title => this.waitForUser(() => handler(title)) : undefined;
