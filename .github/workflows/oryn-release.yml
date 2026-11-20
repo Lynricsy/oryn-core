@@ -1,4 +1,5 @@
-# Oryn 发布：tag `oryn-v*` 触发，构建 linux-x64 / linux-arm64 / darwin-arm64 / darwin-x64 的单文件 omp 与 RPC 类型声明并发布 Release。
+# Oryn 发布：tag `oryn-v*` 触发，构建 linux-x64 / linux-arm64 / darwin-arm64 的单文件 omp 与 RPC 类型声明并发布 Release。
+# 不出 Intel mac（darwin-x64）：macos-15-intel 构建近一小时且按 macOS 倍率计费，Runner 只支持 Apple 芯片的 mac。
 # 规程见 ORYN.md。
 name: oryn-release
 
@@ -44,11 +45,6 @@ jobs:
                  asset: omp-darwin-arm64
                  emit_dts: false
                  uname_m: arm64
-               - runner: macos-15-intel
-                 target: bun-darwin-x64
-                 asset: omp-darwin-x64
-                 emit_dts: false
-                 uname_m: x86_64
       steps:
          - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
            with:
@@ -129,7 +125,7 @@ jobs:
            working-directory: dist
            run: |
               ls -la
-              sha256sum omp-linux-x64 omp-linux-arm64 omp-darwin-arm64 omp-darwin-x64 omp-rpc-types.d.ts > SHA256SUMS
+              sha256sum omp-linux-x64 omp-linux-arm64 omp-darwin-arm64 omp-rpc-types.d.ts > SHA256SUMS
               cat SHA256SUMS
          - name: Publish release
            env:
@@ -139,5 +135,5 @@ jobs:
               commit="$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)"
               notes="Oryn agent build from \`$commit\`. See ORYN.md."
               gh release create "$RELEASE_TAG" --title "$RELEASE_TAG" --notes "$notes" \
-                 dist/omp-linux-x64 dist/omp-linux-arm64 dist/omp-darwin-arm64 dist/omp-darwin-x64 \
+                 dist/omp-linux-x64 dist/omp-linux-arm64 dist/omp-darwin-arm64 \
                  dist/omp-rpc-types.d.ts dist/SHA256SUMS
