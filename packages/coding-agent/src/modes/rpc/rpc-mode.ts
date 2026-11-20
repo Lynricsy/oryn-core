@@ -237,6 +237,7 @@ import { startRpcTan } from "./rpc-tan";
 import { type HostedComponentFactory, showHostedComponent } from "./rpc-custom-ui";
 import { OrynComposerPredictor } from "./oryn-composer-prediction";
 import { handleOrynMarkSessionStart, handleOrynSelectModel } from "./oryn-model-source";
+import { OrynShellPseudoProjector } from "./oryn-shell-pseudo";
 import { OrynToolExecutor } from "./oryn-tool-exec";
 import { handleOrynCancelJob, isOrynLoopPromptCandidate, orynPlanModeConflict } from "./oryn-ui-parity";
 import type {
@@ -1942,6 +1943,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 		settledWithoutRun: () => void settleWatcher.check(),
 	});
 	const sessionEvents = new RpcSessionEventForwarder(output);
+	const orynShellPseudo = new OrynShellPseudoProjector();
 
 	const pendingExtensionRequests = new RpcPendingExtensionRequests();
 	// OAuth UI bridge for mcp_reauth (C1): the browser URL rides the EXISTING
@@ -2429,15 +2431,20 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 		session.subscribe(event => {
 			// Forward through the single filter/stamping path (agent_end messages get
 			// their persisted entry ids), then observe for prompt completion and settling.
+			// Oryn：bash 运行帧补上 details.orynPseudo（oryn-shell-pseudo.ts）
 			sessionEvents.forward(
-				event.type === "agent_end"
-					? {
-							...event,
-							messages: attachRpcMessageEntryIds(event.messages, session.sessionManager.getBranch(), message =>
-								session.getPersistedMessageEntryId(message),
-							),
-						}
-					: event,
+				orynShellPseudo.project(
+					event.type === "agent_end"
+						? {
+								...event,
+								messages: attachRpcMessageEntryIds(
+									event.messages,
+									session.sessionManager.getBranch(),
+									message => session.getPersistedMessageEntryId(message),
+								),
+							}
+						: event,
+				),
 			);
 			// Before the prompt-result and settle reports: a goal continuation decided at this
 			// agent_end is scheduled (and reported as pending) before either reads settlement.
