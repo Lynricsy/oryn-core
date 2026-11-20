@@ -11,6 +11,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { $which, logger } from "@oh-my-pi/pi-utils";
+import { orynIsolatedSshArgs } from "../capability/oryn-user-isolation";
 import {
 	credentialString,
 	type DestinationProcessContext,
@@ -399,6 +400,7 @@ export async function startExposure(config: ExposureConfig, port: number): Promi
 					"BatchMode=yes",
 					"-o",
 					"StrictHostKeyChecking=accept-new",
+					...orynIsolatedSshArgs(),
 					"-o",
 					"ServerAliveInterval=30",
 					"-o",
@@ -428,6 +430,7 @@ export async function startExposure(config: ExposureConfig, port: number): Promi
 						"BatchMode=yes",
 						"-o",
 						"StrictHostKeyChecking=accept-new",
+						...orynIsolatedSshArgs(),
 						"-R",
 						`0:127.0.0.1:${port}`,
 						`${token}@pro.pinggy.io`,
@@ -440,6 +443,7 @@ export async function startExposure(config: ExposureConfig, port: number): Promi
 						"BatchMode=yes",
 						"-o",
 						"StrictHostKeyChecking=accept-new",
+						...orynIsolatedSshArgs(),
 						"-o",
 						"ServerAliveInterval=30",
 						"-o",
@@ -522,6 +526,7 @@ export async function startExposure(config: ExposureConfig, port: number): Promi
 					binary,
 					"-o",
 					"BatchMode=yes",
+					...orynIsolatedSshArgs(),
 					"-o",
 					"ExitOnForwardFailure=yes",
 					"-N",

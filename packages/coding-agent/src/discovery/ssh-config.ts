@@ -11,6 +11,7 @@
  */
 import * as path from "node:path";
 import { registerProvider } from "../capability";
+import { orynBlocksUserSource } from "../capability/oryn-user-isolation";
 import { readFile } from "../capability/fs";
 import { type SSHHost, sshCapability } from "../capability/ssh";
 import type { LoadContext, LoadResult } from "../capability/types";
@@ -94,6 +95,7 @@ async function scanFile(file: string, depth: number, scan: Scan): Promise<void> 
 }
 
 async function load(ctx: LoadContext): Promise<LoadResult<SSHHost>> {
+	if (orynBlocksUserSource(PROVIDER_ID)) return { items: [] };
 	const hosts = new Map<string, SSHHost>();
 	const visited = new Set<string>();
 	const warnings: string[] = [];

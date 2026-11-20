@@ -1,4 +1,4 @@
-# Oryn 发布：tag `oryn-v*` 触发，构建 linux-x64 / linux-arm64 的单文件 omp 与 RPC 类型声明并发布 Release。
+# Oryn 发布：tag `oryn-v*` 触发，构建 linux-x64 / linux-arm64 / darwin-arm64 / darwin-x64 的单文件 omp 与 RPC 类型声明并发布 Release。
 # 规程见 ORYN.md。
 name: oryn-release
 
@@ -38,6 +38,17 @@ jobs:
                  target: bun-linux-arm64
                  asset: omp-linux-arm64
                  emit_dts: false
+               # macos-13 已下线、macos-14 已退役（actions/runner-images）；uname_m 供构建前断言架构，防止标签变动后产出错的架构。
+               - runner: macos-15
+                 target: bun-darwin-arm64
+                 asset: omp-darwin-arm64
+                 emit_dts: false
+                 uname_m: arm64
+               - runner: macos-15-intel
+                 target: bun-darwin-x64
+                 asset: omp-darwin-x64
+                 emit_dts: false
+                 uname_m: x86_64
       steps:
          - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
            with:
@@ -53,10 +64,18 @@ jobs:
            run: bun install
          # natives 从源码构建（Oryn Core 改了 crates/natives，见 ORYN.md）：系统依赖同上游 Dockerfile 的
          # natives-builder（bindgen 需要 clang，opusic-sys 用 CMake 构建 libopus），工具链取 rust-toolchain.toml。
-         - name: Native build dependencies
+         - name: Native build dependencies (Linux)
+           if: runner.os == 'Linux'
            run: |
               sudo apt-get update
               sudo apt-get install -y --no-install-recommends pkg-config libssl-dev clang libclang-dev cmake make ninja-build
+         # macOS：clang / libclang 用 Xcode 自带（clang-sys 经 xcode-select 找到），只补 cmake、ninja（镜像已带的不重装，避免 brew link 冲突）。
+         - name: Native build dependencies (macOS)
+           if: runner.os == 'macOS'
+           run: |
+              for tool in cmake ninja; do command -v "$tool" >/dev/null || brew install "$tool"; done
+              cmake --version
+              ninja --version
          - name: Rust toolchain
            run: |
               if ! command -v rustup >/dev/null; then
@@ -66,8 +85,17 @@ jobs:
               fi
               rustup show
               cargo --version
+         - name: Assert architecture (macOS)
+           if: runner.os == 'macOS'
+           run: test "$(uname -m)" = "${{ matrix.uname_m }}"
          - name: Build omp
            run: bun scripts/oryn/build-agent.ts --target ${{ matrix.target }} --out dist/${{ matrix.asset }}
+         # 同上游 scripts/ci-release-build-binaries.ts：bun 编出的 Mach-O 签名不保证可用（arm64 不签无法运行），重新 ad-hoc 签名。
+         - name: Ad-hoc codesign (macOS)
+           if: runner.os == 'macOS'
+           run: |
+              codesign --force --sign - --entitlements scripts/macos-entitlements.plist dist/${{ matrix.asset }}
+              codesign --verify --verbose dist/${{ matrix.asset }}
          - name: omp --version
            run: ./dist/${{ matrix.asset }} --version
          - name: omp --smoke-test
@@ -101,7 +129,7 @@ jobs:
            working-directory: dist
            run: |
               ls -la
-              sha256sum omp-linux-x64 omp-linux-arm64 omp-rpc-types.d.ts > SHA256SUMS
+              sha256sum omp-linux-x64 omp-linux-arm64 omp-darwin-arm64 omp-darwin-x64 omp-rpc-types.d.ts > SHA256SUMS
               cat SHA256SUMS
          - name: Publish release
            env:
@@ -111,4 +139,5 @@ jobs:
               commit="$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)"
               notes="Oryn agent build from \`$commit\`. See ORYN.md."
               gh release create "$RELEASE_TAG" --title "$RELEASE_TAG" --notes "$notes" \
-                 dist/omp-linux-x64 dist/omp-linux-arm64 dist/omp-rpc-types.d.ts dist/SHA256SUMS
+                 dist/omp-linux-x64 dist/omp-linux-arm64 dist/omp-darwin-arm64 dist/omp-darwin-x64 \
+                 dist/omp-rpc-types.d.ts dist/SHA256SUMS

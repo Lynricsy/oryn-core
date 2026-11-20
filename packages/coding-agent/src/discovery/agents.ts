@@ -8,6 +8,7 @@
 import * as path from "node:path";
 import { isWsl, windowsPathToWslMount } from "@oh-my-pi/pi-utils";
 import { registerProvider } from "../capability";
+import { orynBlocksUserSource } from "../capability/oryn-user-isolation";
 import { type ContextFile, contextFileCapability } from "../capability/context-file";
 import { readFile } from "../capability/fs";
 import { type Prompt, promptCapability } from "../capability/prompt";
@@ -122,6 +123,7 @@ function getUserHomeCandidates(ctx: LoadContext): string[] {
 
 /** User-level paths: ~/.agent[s]/<segments>, plus the Windows host profile under WSL. */
 export function getUserPathCandidates(ctx: LoadContext, ...segments: string[]): string[] {
+	if (orynBlocksUserSource(PROVIDER_ID)) return [];
 	return getUserHomeCandidates(ctx).flatMap(home =>
 		AGENT_DIR_CANDIDATES.map(baseDir => path.join(home, baseDir, ...segments)),
 	);

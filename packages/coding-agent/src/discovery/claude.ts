@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { hasFsCode, tryParseJson } from "@oh-my-pi/pi-utils";
 import { registerProvider } from "../capability";
 import { isUserSourceEnabled } from "../capability";
+import { orynBlocksUserSource } from "../capability/oryn-user-isolation";
 import type { ContextFile } from "../capability/context-file";
 import { contextFileCapability } from "../capability/context-file";
 import { type ExtensionModule, extensionModuleCapability } from "../capability/extension-module";
@@ -63,6 +64,7 @@ function readClaudeUserToggle(toggle: Setting<boolean>): boolean {
  * that capability's directory.
  */
 function getUserClaude(ctx: LoadContext, capabilityToggle = false): string | null {
+	if (orynBlocksUserSource(PROVIDER_ID)) return null;
 	if (!capabilityToggle && !isUserSourceEnabled("claude", ctx)) return null;
 	const { configDir } = resolveClaudePaths(ctx.home);
 	return configDir;

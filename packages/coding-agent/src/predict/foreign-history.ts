@@ -7,6 +7,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import { isEnoent, logger } from "@oh-my-pi/pi-utils";
+import { orynBlocksUserSource } from "../capability/oryn-user-isolation";
 import { resolveClaudePaths } from "../config/claude-paths";
 import { readForeignJsonRecords } from "../session/foreign-session-jsonl";
 
@@ -15,6 +16,7 @@ const PLACEHOLDER = /\[(?:Pasted text|Image) #\d+[^\]]*\]/g;
 
 /** Claude Code then Codex prompts, each in file order; missing or unreadable files contribute nothing. */
 export async function readForeignPrompts(): Promise<string[]> {
+	if (orynBlocksUserSource("claude") && orynBlocksUserSource("codex")) return [];
 	const files = [
 		path.join(resolveClaudePaths().configDir, "history.jsonl"),
 		path.join(os.homedir(), ".codex", "history.jsonl"),

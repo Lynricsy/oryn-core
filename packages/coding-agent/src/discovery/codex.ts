@@ -9,6 +9,7 @@
 import * as path from "node:path";
 import { logger, parseFrontmatter } from "@oh-my-pi/pi-utils";
 import { isUserSourceEnabled, registerProvider } from "../capability";
+import { orynBlocksUserSource } from "../capability/oryn-user-isolation";
 import type { ContextFile } from "../capability/context-file";
 import { contextFileCapability } from "../capability/context-file";
 import { type ExtensionModule, extensionModuleCapability } from "../capability/extension-module";
@@ -57,6 +58,7 @@ function getProjectCodexDir(ctx: LoadContext): string {
  * capability's directory.
  */
 function getUserCodexDir(ctx: LoadContext, capabilityToggle = false): string | null {
+	if (orynBlocksUserSource(PROVIDER_ID)) return null;
 	if (!capabilityToggle && !isUserSourceEnabled("codex", ctx)) return null;
 	return path.join(ctx.home, SOURCE_PATHS.codex.userBase);
 }

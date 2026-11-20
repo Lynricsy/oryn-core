@@ -16,6 +16,7 @@ import {
 	tryParseJson,
 } from "@oh-my-pi/pi-utils";
 import { isUserSourceEnabled } from "../capability";
+import { orynBlocksUserSource, orynUserSourcesIsolated } from "../capability/oryn-user-isolation";
 import type { ContextFile } from "../capability/context-file";
 import type { ExtensionModule } from "../capability/extension-module";
 import { invalidate as invalidateFsCache, readDirEntries, readFile } from "../capability/fs";
@@ -109,6 +110,7 @@ export function resolveUserPath(ctx: LoadContext, source: SourceId, subpath: str
 	// Native user config is profile-scoped via getAgentDir() (the active profile's
 	// agent dir), matching builtin.ts and getMCPConfigPath("user").
 	if (source === "native") return path.join(getAgentDir(), subpath);
+	if (orynBlocksUserSource(source)) return null;
 	if (source === "claude") return path.join(resolveClaudePaths(ctx.home).configDir, subpath);
 	const paths = SOURCE_PATHS[source];
 	if (!paths.userAgent) return null;
@@ -741,7 +743,7 @@ export async function loadStandaloneContextFiles(
 	const scanToHome = repoRoot !== null && cwdIsUnderHome && repoIsUnderHome;
 	const boundary = scanToHome ? home : (repoRoot ?? (cwdIsUnderHome ? home : filesystemRoot));
 	const includeBoundary = repoRoot === null ? cwdIsUnderHome : !samePath(boundary, home) || repoIsHome;
-	const excludeHome = scanToHome;
+	const excludeHome = scanToHome || orynUserSourcesIsolated();
 
 	let current = cwd;
 	while (true) {
@@ -1189,7 +1191,7 @@ async function readClaudeEnabledPlugins(
 ): Promise<{ enabled: Map<string, boolean>; sources: string[] }> {
 	const enabled = new Map<string, boolean>();
 	const sources: string[] = [];
-	const candidates = [path.join(claudeConfigDir, "settings.json")];
+	const candidates = orynBlocksUserSource("claude") ? [] : [path.join(claudeConfigDir, "settings.json")];
 	for (const dir of projectDirs) {
 		candidates.push(path.join(dir, ".claude", "settings.json"), path.join(dir, ".claude", "settings.local.json"));
 	}
@@ -1389,7 +1391,7 @@ async function loadClaudePluginRoots({
 
 	// ── Claude Code registry ──────────────────────────────────────────────────
 	const registryPath = path.join(claudeConfigDir, "plugins", "installed_plugins.json");
-	const content = await readFile(registryPath);
+	const content = orynBlocksUserSource("claude-plugins") ? null : await readFile(registryPath);
 
 	if (content) {
 		const registry = parseClaudePluginsRegistry(content);

@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { $which, getRemoteHostDir, getSshControlDir, isEnoent, logger, postmortem, ptree } from "@oh-my-pi/pi-utils";
 import { assertOwnerPrivateDir } from "../utils/owner-private-dir";
+import { orynIsolatedSshArgs } from "../capability/oryn-user-isolation";
 import { buildSshTarget, sanitizeHostName } from "./utils";
 
 export interface SSHConnectionTarget {
@@ -200,6 +201,7 @@ function buildCommonArgs(host: SSHConnectionTarget, owner: ControlPathOwner, opt
 	}
 
 	args.push("-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new");
+	args.push(...orynIsolatedSshArgs());
 
 	if (host.port) {
 		args.push("-p", String(host.port));
@@ -230,6 +232,7 @@ export async function buildInteractiveSshArgs(host: SSHConnectionTarget, remoteC
 			args.push("-o", `ControlPath=${CONTROL_PATH}`, "-o", "ControlPersist=3600");
 		}
 	}
+	args.push(...orynIsolatedSshArgs());
 	if (host.port) args.push("-p", String(host.port));
 	if (host.keyPath) args.push("-i", host.keyPath);
 	args.push(target, remoteCommand);
@@ -322,6 +325,7 @@ function resolveControlPathOwner(host: SSHConnectionTarget, platform?: SshPlatfo
 
 async function lookupControlPathOwner(target: string, port?: number): Promise<ControlPathOwner> {
 	const args = port ? ["-G", "-p", String(port), target] : ["-G", target];
+	args.unshift(...orynIsolatedSshArgs());
 	try {
 		const { exitCode, stdout, stderr } = await runSshCaptureSync(args);
 		if (exitCode !== 0) {

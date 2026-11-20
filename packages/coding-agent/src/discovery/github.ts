@@ -18,6 +18,7 @@
 import * as path from "node:path";
 import { parseFrontmatter } from "@oh-my-pi/pi-utils";
 import { isUserSourceEnabled, registerProvider } from "../capability";
+import { orynBlocksUserSource } from "../capability/oryn-user-isolation";
 import { type ContextFile, contextFileCapability } from "../capability/context-file";
 import { readFile } from "../capability/fs";
 import { type Instruction, instructionCapability } from "../capability/instruction";
@@ -265,6 +266,7 @@ function transformPrompt(name: string, content: string, filePath: string, source
 
 /** Directories listed in the COPILOT_CUSTOM_INSTRUCTIONS_DIRS env var (comma-separated). */
 function copilotCustomInstructionDirs(): string[] {
+	if (orynBlocksUserSource(PROVIDER_ID)) return [];
 	const raw = process.env.COPILOT_CUSTOM_INSTRUCTIONS_DIRS;
 	return raw ? parseCSV(raw) : [];
 }

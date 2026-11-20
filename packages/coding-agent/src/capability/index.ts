@@ -12,6 +12,7 @@ import { getProjectDir, logger } from "@oh-my-pi/pi-utils";
 
 import type { Settings } from "../config/settings";
 import { clearCache as clearFsCache, findRepoRoot, cacheStats as fsCacheStats, invalidate as invalidateFs } from "./fs";
+import { orynBlocksUserSource } from "./oryn-user-isolation";
 import type {
 	Capability,
 	CapabilityInfo,
@@ -418,6 +419,7 @@ export function isForeignUserProvider(providerId: string): boolean {
  */
 export function isUserSourceEnabled(source: string, ctx?: LoadContext): boolean {
 	const id = source.replace(/^\./, "");
+	if (orynBlocksUserSource(id)) return false;
 	if (disabledProviders().has(id)) return false;
 	if (FOREIGN_USER_PROVIDERS[id] !== true) return true;
 	if (ctx?.explicitProviders?.has(id) || ctx?.includeOptOutUserSources) return true;

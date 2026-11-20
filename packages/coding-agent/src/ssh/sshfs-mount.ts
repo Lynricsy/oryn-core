@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { $which, getRemoteDir, postmortem } from "@oh-my-pi/pi-utils";
 import { $ } from "bun";
+import { orynIsolatedSshArgs } from "../capability/oryn-user-isolation";
 import {
 	ensureSshControlDir,
 	getControlPathTemplate,
@@ -54,6 +55,7 @@ function buildSshfsArgs(host: SSHConnectionTarget): string[] {
 		"BatchMode=yes",
 		"-o",
 		"StrictHostKeyChecking=accept-new",
+		...orynIsolatedSshArgs(),
 	];
 
 	if (supportsSshControlMaster()) {
