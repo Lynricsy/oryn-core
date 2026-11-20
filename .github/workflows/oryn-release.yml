@@ -1,5 +1,5 @@
 # Oryn 发布：tag `oryn-v*` 触发，构建 linux-x64 / linux-arm64 / darwin-arm64 的单文件 omp 与 RPC 类型声明并发布 Release。
-# 不出 Intel mac（darwin-x64）：macos-15-intel 构建近一小时且按 macOS 倍率计费，Runner 只支持 Apple 芯片的 mac。
+# 不出 Intel mac（darwin-x64）：macos-15-intel 构建近一小时，拖慢每次发布；Runner 只支持 Apple 芯片的 mac。
 # 规程见 ORYN.md。
 name: oryn-release
 

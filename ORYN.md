@@ -64,4 +64,4 @@ scripts/oryn/sync.sh
 
 ## 发布
 
-tag `oryn-v*` 触发 `oryn-release.yml`：`ubuntu-24.04` 构建 linux-x64、`ubuntu-24.04-arm` 构建 linux-arm64、`macos-15` 构建 darwin-arm64（mac 作业先断言 `uname -m`，构建后 ad-hoc `codesign`），各自跑 `omp --smoke-test` 与 `smoke-rpc.mjs`；产物 `omp-linux-x64`、`omp-linux-arm64`、`omp-darwin-arm64`、`omp-rpc-types.d.ts`、`SHA256SUMS` 发布到同名 Release。不出 Intel mac（darwin-x64）：`macos-15-intel` 构建近一小时且按 macOS 倍率计费；`build-agent.ts` 仍接受 `bun-darwin-x64`，需要时可在 Intel mac 上本地构建。
+tag `oryn-v*` 触发 `oryn-release.yml`：`ubuntu-24.04` 构建 linux-x64、`ubuntu-24.04-arm` 构建 linux-arm64、`macos-15` 构建 darwin-arm64（mac 作业先断言 `uname -m`，构建后 ad-hoc `codesign`），各自跑 `omp --smoke-test` 与 `smoke-rpc.mjs`；产物 `omp-linux-x64`、`omp-linux-arm64`、`omp-darwin-arm64`、`omp-rpc-types.d.ts`、`SHA256SUMS` 发布到同名 Release。不出 Intel mac（darwin-x64）：`macos-15-intel` 构建近一小时，拖慢每次发布；`build-agent.ts` 仍接受 `bun-darwin-x64`，需要时可在 Intel mac 上本地构建。
