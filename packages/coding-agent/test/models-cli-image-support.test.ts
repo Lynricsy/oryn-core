@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, spyOn, vi } from "bun:test";
 import type { Api, Model, ModelSpec } from "@oh-my-pi/pi-ai/types";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
+import { Effort } from "@oh-my-pi/pi-catalog/effort";
 import { MODEL_KINDS, modelKind, type ModelKind } from "@oh-my-pi/pi-catalog/types";
 import { renderProviderModels } from "@oh-my-pi/pi-coding-agent/cli/models-cli";
 import Models from "@oh-my-pi/pi-coding-agent/commands/models";
@@ -204,5 +205,44 @@ describe("omp models image support column", () => {
 				makeModel({ id: "text-only-model", api: "openai-completions", input: ["text"], transport: "pi-native" }),
 			),
 		).toBe("no");
+	});
+});
+
+describe("omp models --json thinking default", () => {
+	it("reports the model's own default effort, and null when it has none", () => {
+		const withDefault = buildModel({
+			id: "effort-model",
+			name: "effort-model",
+			api: "openai-completions",
+			provider: "myproxy",
+			baseUrl: "https://proxy.example.com/v1",
+			reasoning: true,
+			thinking: { mode: "effort", efforts: [Effort.Low, Effort.Medium, Effort.High], defaultLevel: Effort.Medium },
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 128_000,
+			maxTokens: 8_192,
+		} as ModelSpec);
+		const plain = makeModel({ id: "plain-model", api: "openai-completions", input: ["text"] });
+		const output: string[] = [];
+		spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+			output.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+			return true;
+		});
+		renderProviderModels(
+			{ getAvailable: () => [withDefault, plain], getError: () => undefined },
+			"ls",
+			undefined,
+			true,
+			"all",
+		);
+		vi.restoreAllMocks();
+		const { models } = JSON.parse(output.join("")) as {
+			models: { id: string; thinking: string[] | null; thinkingDefault: string | null }[];
+		};
+		const byId = new Map(models.map(m => [m.id, m]));
+		expect(byId.get("effort-model")?.thinking).toEqual(["low", "medium", "high"]);
+		expect(byId.get("effort-model")?.thinkingDefault).toBe("medium");
+		expect(byId.get("plain-model")?.thinkingDefault).toBeNull();
 	});
 });

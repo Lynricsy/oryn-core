@@ -82,6 +82,11 @@ interface ModelJson {
 	reasoning: boolean;
 	/** Supported thinking efforts when the model thinks, otherwise null. */
 	thinking: readonly Effort[] | null;
+	/**
+	 * The model's own default effort (`thinking.defaultLevel`), otherwise null. New sessions and model
+	 * switches prefer it over the user's `defaultThinkingLevel`, so clients need it to show the level in force.
+	 */
+	thinkingDefault: Effort | null;
 	input: ("text" | "image")[];
 	cost: Model<Api>["cost"];
 	pricingStatus: ModelPricingStatus;
@@ -126,6 +131,7 @@ function toModelJson(model: Model<Api>): ModelJson {
 		maxTokens: model.maxTokens,
 		reasoning: model.reasoning,
 		thinking: model.thinking ? getSupportedEfforts(model) : null,
+		thinkingDefault: model.thinking?.defaultLevel ?? null,
 		input: model.input,
 		cost: { ...model.cost, input, output, cacheRead, cacheWrite },
 		pricingStatus: getModelPricingStatus(model),
