@@ -4,7 +4,7 @@
  *
  * 以 nornzach/oh-my-pi-gui 的 `scripts/build-bundled-omp.ts`（MIT）为蓝本，去掉了 GUI 协议检查、
  * GUI 目录布局与 macOS 签名，只保留：
- *   1. 从本仓库源码构建 natives 原生插件（Oryn Core 改了 crates/pi-natives，见 ORYN.md，不能用 npm 上的官方 leaf 包）：
+ *   1. 从本仓库源码构建 natives 原生插件（Oryn Core 改了 crates/natives，见 ORYN.md，不能用 npm 上的官方 leaf 包）：
  *      走上游的本地 cargo 路径（`packages/natives/scripts/build-bindings.ts`，cargo profile 默认 `ci`），
  *      x64 固定构建 baseline 变体（x86-64-v2，加载器在支持 AVX2 的机器上也回落到它）；
  *      只能在目标架构的机器上构建（CI 用 x64 与 arm64 两种 runner）；

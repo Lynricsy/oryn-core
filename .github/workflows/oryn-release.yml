@@ -51,7 +51,7 @@ jobs:
          # 锁文件带有 nornzach 嵌套 GUI 布局（packages/gui）的条目，--frozen-lockfile 会失败；构建只需要依赖装齐。
          - name: bun install
            run: bun install
-         # natives 从源码构建（Oryn Core 改了 crates/pi-natives，见 ORYN.md）：系统依赖同上游 Dockerfile 的
+         # natives 从源码构建（Oryn Core 改了 crates/natives，见 ORYN.md）：系统依赖同上游 Dockerfile 的
          # natives-builder（bindgen 需要 clang，opusic-sys 用 CMake 构建 libopus），工具链取 rust-toolchain.toml。
          - name: Native build dependencies
            run: |

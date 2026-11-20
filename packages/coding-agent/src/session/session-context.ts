@@ -135,6 +135,11 @@ export interface SessionContext {
 	 * Only populated in transcript mode.
 	 */
 	cacheMissExplainedAt?: boolean[];
+	/**
+	 * A model/compaction/plan-mode reset follows the last assistant turn, so the
+	 * next live turn's prompt-cache miss is explained. Only set in transcript mode.
+	 */
+	nextCacheMissExplained?: boolean;
 }
 
 /** Lists session model strings to try when restoring, in fallback order. */
@@ -848,6 +853,7 @@ export function buildSessionContext(
 		messages,
 		messageEntryIds: options?.transcript ? messageEntryIds : undefined,
 		cacheMissExplainedAt: options?.transcript ? cacheMissExplainedAt : undefined,
+		nextCacheMissExplained: options?.transcript ? pendingReset : undefined,
 		thinkingLevel,
 		configuredThinkingLevel,
 		serviceTier,

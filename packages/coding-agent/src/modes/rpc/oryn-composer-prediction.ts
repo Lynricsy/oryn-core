@@ -75,9 +75,9 @@ export class OrynComposerPredictor {
 				this.#controller.cancel();
 				break;
 			case "agent_end":
-				// 非终结的 agent_end 后面紧跟排队消息的续跑；自动重试还没开始时也会先收到 agent_end。
-				// 两者都不算完成，与 TUI 的 retryPending 一致。
-				if (event.isTerminal !== false && completedRun(event) && !this.#session.isRetrying) {
+				// 会话层的 agent_end 每次运行只发一次（运行中途的循环停顿是 agent_pause）；
+				// 自动重试待发时不算完成，与 TUI 的 retryPending 一致。
+				if (completedRun(event) && !this.#session.isRetrying) {
 					this.#controller.request();
 				}
 				break;

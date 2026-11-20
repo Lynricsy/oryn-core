@@ -35,8 +35,13 @@ function assistantMessage(stopReason: AssistantMessage["stopReason"]): Assistant
 	} as unknown as AssistantMessage;
 }
 
-function agentEnd(stopReason: AssistantMessage["stopReason"], isTerminal?: boolean): AgentSessionEvent {
-	return { type: "agent_end", messages: [assistantMessage(stopReason)], isTerminal } as AgentSessionEvent;
+function agentEnd(stopReason: AssistantMessage["stopReason"]): AgentSessionEvent {
+	return { type: "agent_end", messages: [assistantMessage(stopReason)] };
+}
+
+/** 运行中途的循环停顿（排队消息、后台任务等会续跑）。 */
+function agentPause(): AgentSessionEvent {
+	return { type: "agent_pause", messages: [assistantMessage("stop")], yielded: true, awaiting: false };
 }
 
 function harness(options: { enabled?: boolean; retrying?: boolean } = {}) {
@@ -98,11 +103,11 @@ describe("OrynComposerPredictor", () => {
 		expect(frames).toHaveLength(2);
 	});
 
-	it("does not predict after an aborted, failed, non-terminal, or retrying turn, or while disabled", () => {
+	it("does not predict after an aborted or failed turn, a paused run, a pending retry, or while disabled", () => {
 		const cases = [
 			[harness(), agentEnd("aborted")],
 			[harness(), agentEnd("error")],
-			[harness(), agentEnd("stop", false)],
+			[harness(), agentPause()],
 			[harness({ retrying: true }), agentEnd("stop")],
 			[harness({ enabled: false }), agentEnd("stop")],
 		] as const;
