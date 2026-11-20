@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { $which, getRemoteHostDir, getSshControlDir, isEnoent, logger, postmortem, ptree } from "@oh-my-pi/pi-utils";
 import { assertOwnerPrivateDir } from "../utils/owner-private-dir";
-import { orynIsolatedSshArgs } from "../capability/oryn-user-isolation";
+import { orynIsolatedSshArgs, orynIsolatedSshControlDir } from "../capability/oryn-user-isolation";
 import { buildSshTarget, sanitizeHostName } from "./utils";
 
 export interface SSHConnectionTarget {
@@ -112,7 +112,7 @@ export function resolveSshControlDir(opts: {
 }
 
 const { dir: CONTROL_DIR, shared: CONTROL_DIR_SHARED } = resolveSshControlDir({
-	canonicalDir: getSshControlDir(),
+	canonicalDir: orynIsolatedSshControlDir(getSshControlDir()),
 	platform: process.platform,
 	uid: process.getuid?.(),
 });

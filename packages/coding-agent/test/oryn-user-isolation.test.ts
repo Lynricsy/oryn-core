@@ -15,12 +15,14 @@ import { clearCache as clearFsCache } from "@oh-my-pi/pi-coding-agent/capability
 import {
 	ORYN_ISOLATE_USER_SOURCES_ENV,
 	orynIsolatedSshArgs,
+	orynIsolatedSshControlDir,
 } from "@oh-my-pi/pi-coding-agent/capability/oryn-user-isolation";
 import { type Skill, skillCapability } from "@oh-my-pi/pi-coding-agent/capability/skill";
 import { type SSHHost, sshCapability } from "@oh-my-pi/pi-coding-agent/capability/ssh";
 import { loadCapability, reset as resetCapabilityCache } from "@oh-my-pi/pi-coding-agent/discovery";
 import { clearClaudePluginRootsCache, listClaudePluginRoots } from "@oh-my-pi/pi-coding-agent/discovery/helpers";
 import { readForeignPrompts } from "@oh-my-pi/pi-coding-agent/predict/foreign-history";
+import { resolveSshControlDir } from "@oh-my-pi/pi-coding-agent/ssh/connection-manager";
 import { __resetDirsFromEnvForTests, getConfigRootDir, removeWithRetries, setAgentDir } from "@oh-my-pi/pi-utils";
 import { restoreEnvValue } from "./helpers/settings-test-state";
 
@@ -34,6 +36,7 @@ const ENV_KEYS = [
 	"OMP_PROFILE",
 	"PI_PROFILE",
 	ORYN_ISOLATE_USER_SOURCES_ENV,
+	"ORYN_SSH_KEY",
 ] as const;
 const savedEnv = Object.fromEntries(ENV_KEYS.map(key => [key, process.env[key]]));
 
@@ -200,5 +203,42 @@ describe("ORYN_ISOLATE_USER_SOURCES", () => {
 		await fs.writeFile(config, "# kept\n");
 		orynIsolatedSshArgs();
 		expect(await fs.readFile(config, "utf8")).toBe("# kept\n");
+	});
+
+	test("ssh 控制目录：按 ORYN_SSH_KEY 隔离，超预算的回退目录也按密钥区分", () => {
+		const controlBase = "/home/u/.oryn/omp/agent/ssh-control";
+		const dirFor = (key: string | undefined) => {
+			if (key === undefined) delete process.env.ORYN_SSH_KEY;
+			else process.env.ORYN_SSH_KEY = key;
+			return orynIsolatedSshControlDir(controlBase);
+		};
+
+		setIsolated(false);
+		expect(dirFor("/keys/thread-a")).toBe(controlBase);
+
+		setIsolated(true);
+		expect(dirFor(undefined)).toBe(controlBase);
+		const a = dirFor("/keys/thread-a");
+		const b = dirFor("/keys/thread-b");
+		expect(path.dirname(a)).toBe(controlBase);
+		expect(path.basename(a)).toMatch(/^[0-9a-f]{12}$/);
+		expect(a).not.toBe(b);
+		expect(dirFor("/keys/thread-a")).toBe(a);
+
+		const longBase = `/${"x".repeat(90)}`;
+		const fallback = (key: string) => {
+			process.env.ORYN_SSH_KEY = key;
+			return resolveSshControlDir({
+				canonicalDir: orynIsolatedSshControlDir(longBase),
+				platform: "linux",
+				uid: 1000,
+			});
+		};
+		const fa = fallback("/keys/thread-a");
+		const fb = fallback("/keys/thread-b");
+		expect(fa.shared).toBe(true);
+		expect(fb.shared).toBe(true);
+		expect(fa.dir).not.toBe(fb.dir);
+		expect(fallback("/keys/thread-a").dir).toBe(fa.dir);
 	});
 });

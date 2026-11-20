@@ -23,7 +23,7 @@
  * - `predict/foreign-history.ts`：文本预测不读 `~/.claude/history.jsonl`、`~/.codex/history.jsonl`。
  * - Core 发起的 ssh（`ssh/connection-manager.ts`、`ssh/sshfs-mount.ts`、`blob-broker/exposure.ts`）：
  *   {@link orynIsolatedSshArgs} 把 ssh 配置与 known_hosts 换到配置根下，不读 `~/.ssh/config`、
- *   不写 `~/.ssh/known_hosts`。
+ *   不写 `~/.ssh/known_hosts`；{@link orynIsolatedSshControlDir} 按 `ORYN_SSH_KEY` 隔离 ControlMaster 目录。
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -74,4 +74,17 @@ export function orynIsolatedSshArgs(): string[] {
 	fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 	fs.closeSync(fs.openSync(config, "a", 0o600));
 	return ["-F", config, "-o", `UserKnownHostsFile="${path.join(dir, "known_hosts")}"`];
+}
+
+/**
+ * 隔离时按 `ORYN_SSH_KEY`（orbd 为本线程下发的网关密钥）隔离 ControlMaster 目录：返回
+ * `<base>/<sha256(密钥值) 前 12 位 hex>`。Runner 上各线程的 Core 共用一个配置根，`%C.sock` 不含
+ * IdentityFile，不隔离时后一个线程的 `ssh -O check` 会复用前一个线程已认证的 master，网关收不到它自己的
+ * 公钥，权限与审计记到错误的线程。未隔离或未设置 `ORYN_SSH_KEY` 时原样返回 `base`。
+ * `resolveSshControlDir` 的长度预算与回退照旧作用于返回值（回退目录的哈希含它，仍按密钥区分）。
+ */
+export function orynIsolatedSshControlDir(base: string): string {
+	const key = process.env.ORYN_SSH_KEY;
+	if (!orynUserSourcesIsolated() || !key) return base;
+	return path.join(base, new Bun.CryptoHasher("sha256").update(key).digest("hex").slice(0, 12));
 }
