@@ -9,6 +9,11 @@
  *
  * 条目的 `_source.provider` 保持 `"native"`：下游按 `provider === "native" && level === "project"`
  * 判定开关（如 extensibility/skills.ts），改掉会让项目层技能被当成未知来源。
+ *
+ * SSH 主机由 `ssh-json` provider 提供，同样代理：读 `<root>/.omp/ssh.json`（以及该 loader 的遗留
+ * 项目级路径 `<root>/ssh.json`、`<root>/.ssh.json`，root 由 Oryn 控制）。这些主机的
+ * `_source.provider` 改为 `oryn-project`：RPC 按 `provider === "ssh-json"` 标为可编辑并写回
+ * 会话 cwd 的 `.omp/ssh.json`，而项目层主机由控制面下发，不应在仓库里改。
  */
 import * as path from "node:path";
 import { CONFIG_DIR_NAME } from "@oh-my-pi/pi-utils";
@@ -23,6 +28,7 @@ import { promptCapability } from "../capability/prompt";
 import { ruleCapability } from "../capability/rule";
 import { skillCapability } from "../capability/skill";
 import { slashCommandCapability } from "../capability/slash-command";
+import { type SSHHost, sshCapability } from "../capability/ssh";
 import { systemPromptCapability } from "../capability/system-prompt";
 import { toolCapability } from "../capability/tool";
 import type { Capability, LoadContext, LoadResult, SourceMeta } from "../capability/types";
@@ -61,6 +67,7 @@ type SourcedItem = { _source: SourceMeta };
 function registerOrynProjectProvider<T extends SourcedItem>(
 	capability: Capability<T>,
 	mapItem: (item: T) => T = item => item,
+	targetProviderId: string = NATIVE_PROVIDER_ID,
 ): void {
 	registerProvider<T>(capability.id, {
 		id: ORYN_PROJECT_PROVIDER_ID,
@@ -70,10 +77,10 @@ function registerOrynProjectProvider<T extends SourcedItem>(
 		async load(ctx: LoadContext): Promise<LoadResult<T>> {
 			const root = orynProjectConfigRoot();
 			if (!root) return { items: [] };
-			// load 时再找 native：不依赖模块导入顺序。
-			const native = capability.providers.find(provider => provider.id === NATIVE_PROVIDER_ID);
-			if (!native) return { items: [] };
-			const result = await native.load({ ...ctx, cwd: root, repoRoot: root });
+			// load 时再找被代理的 provider：不依赖模块导入顺序。
+			const target = capability.providers.find(provider => provider.id === targetProviderId);
+			if (!target) return { items: [] };
+			const result = await target.load({ ...ctx, cwd: root, repoRoot: root });
 			return {
 				items: result.items.filter(item => item._source.level === "project").map(mapItem),
 				warnings: result.warnings?.filter(warning => warning.includes(root)),
@@ -95,3 +102,8 @@ registerOrynProjectProvider(hookCapability);
 registerOrynProjectProvider(toolCapability);
 // additive：key 改为按路径唯一，与仓库自带的 AGENTS.md 并存而不是互相替换。
 registerOrynProjectProvider<ContextFile>(contextFileCapability, item => ({ ...item, additive: true }));
+registerOrynProjectProvider<SSHHost>(
+	sshCapability,
+	host => ({ ...host, _source: { ...host._source, provider: ORYN_PROJECT_PROVIDER_ID } }),
+	"ssh-json",
+);

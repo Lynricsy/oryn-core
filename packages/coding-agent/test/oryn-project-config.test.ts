@@ -17,6 +17,7 @@ import { mcpCapability } from "@oh-my-pi/pi-coding-agent/capability/mcp";
 import { ruleCapability } from "@oh-my-pi/pi-coding-agent/capability/rule";
 import { skillCapability } from "@oh-my-pi/pi-coding-agent/capability/skill";
 import { slashCommandCapability } from "@oh-my-pi/pi-coding-agent/capability/slash-command";
+import { type SSHHost, sshCapability } from "@oh-my-pi/pi-coding-agent/capability/ssh";
 import type { ExtensionUIContext } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
 import { expandPromptTemplate } from "@oh-my-pi/pi-coding-agent/config/prompt-templates";
 import { loadCustomCommands } from "@oh-my-pi/pi-coding-agent/extensibility/custom-commands/loader";
@@ -30,7 +31,7 @@ import {
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { discoverAgents } from "@oh-my-pi/pi-coding-agent/task/discovery";
 import { initTheme } from "@oh-my-pi/pi-tui/theme";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
+import { getAgentDir, removeWithRetries, setAgentDir } from "@oh-my-pi/pi-utils";
 
 const ENV_KEYS = ["ORYN_CENTRAL_CONFIG", "ORYN_PROJECT_CONFIG_ROOT"] as const;
 const savedEnv = Object.fromEntries(ENV_KEYS.map(key => [key, process.env[key]]));
@@ -161,6 +162,79 @@ describe("oryn-project provider", () => {
 		expect(without.agents.find(a => a.name === "layer-agent")?.filePath).toBe(
 			path.join(repo, ".omp", "agents", "a.md"),
 		);
+	});
+
+	test("project-layer ssh.json hosts are proxied from ssh-json and win over the agent-dir ssh.json", async () => {
+		const base = await tempDir("oryn-project-ssh-");
+		const root = path.join(base, "root");
+		const repo = path.join(base, "repo");
+		const agentDir = path.join(base, "agent");
+		const sshJson = (hosts: Record<string, object>) => JSON.stringify({ hosts });
+		await put(
+			path.join(root, ".omp", "ssh.json"),
+			sshJson({
+				"oryn-runner": {
+					host: "127.0.0.1",
+					port: 2201,
+					username: "oryn-runner",
+					description: "Runner",
+					compat: true,
+				},
+				"oryn-shared": { host: "127.0.0.1", port: 2202, username: "oryn-shared" },
+			}),
+		);
+		// ssh-json loader 的遗留项目级路径：以 root 为 cwd 时同样被读到（root 由 Oryn 控制，无害）。
+		await put(path.join(root, "ssh.json"), sshJson({ "oryn-legacy": { host: "legacy.example" } }));
+		await put(
+			path.join(agentDir, "ssh.json"),
+			sshJson({ "oryn-shared": { host: "user.example" }, "oryn-user": { host: "user-only.example" } }),
+		);
+		await fs.mkdir(path.join(repo, ".git"), { recursive: true });
+
+		const previousAgentDir = getAgentDir();
+		setAgentDir(agentDir);
+		try {
+			setEnv({ ORYN_PROJECT_CONFIG_ROOT: root });
+			resetCapabilityCache();
+			const withLayer = await loadCapability<SSHHost>(sshCapability.id, { cwd: repo });
+			expect(withLayer.providers).toContain(ORYN_PROJECT_PROVIDER_ID);
+			const hosts = new Map(withLayer.items.map(host => [host.name, host]));
+			const runner = hosts.get("oryn-runner");
+			expect(runner).toMatchObject({
+				host: "127.0.0.1",
+				port: 2201,
+				username: "oryn-runner",
+				description: "Runner",
+				compat: true,
+			});
+			// provider 改为 oryn-project：RPC 不把控制面下发的主机标为可编辑。
+			expect(runner?._source).toMatchObject({
+				provider: ORYN_PROJECT_PROVIDER_ID,
+				level: "project",
+				path: path.join(root, ".omp", "ssh.json"),
+			});
+			// 同名时项目层（优先级 110）压过 agent 目录的 ssh.json（ssh-json，优先级 5），去重先到先得。
+			expect(withLayer.items.filter(host => host.name === "oryn-shared")).toHaveLength(1);
+			expect(hosts.get("oryn-shared")).toMatchObject({ host: "127.0.0.1", port: 2202 });
+			expect(hosts.get("oryn-shared")?._source.provider).toBe(ORYN_PROJECT_PROVIDER_ID);
+			// 用户级条目只经 ssh-json 自己出现，不会被 oryn-project 重复代理。
+			expect(hosts.get("oryn-user")?._source).toMatchObject({ provider: "ssh-json", level: "user" });
+			expect(hosts.get("oryn-legacy")?._source).toMatchObject({
+				provider: ORYN_PROJECT_PROVIDER_ID,
+				path: path.join(root, "ssh.json"),
+			});
+
+			setEnv({});
+			resetCapabilityCache();
+			const without = await loadCapability<SSHHost>(sshCapability.id, { cwd: repo });
+			expect(without.items.some(host => host._source.provider === ORYN_PROJECT_PROVIDER_ID)).toBe(false);
+			const names = without.items.map(host => host.name);
+			expect(names).not.toContain("oryn-runner");
+			expect(names).not.toContain("oryn-legacy");
+			expect(without.items.find(host => host.name === "oryn-shared")?.host).toBe("user.example");
+		} finally {
+			setAgentDir(previousAgentDir);
+		}
 	});
 });
 
