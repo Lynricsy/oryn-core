@@ -87,8 +87,8 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 	{ name: "get_state", doc: "Snapshot the session state.", result: "SessionState" },
 	{
 		name: "set_fast_mode",
-		doc: "Enable or disable fast mode for the session.",
-		params: { enabled: "boolean" },
+		doc: "Set Fast or, when the model supports it, Ultrafast serving for the session.",
+		params: { enabled: "boolean", "ultrafast?": "boolean" },
 		result: "FastModeResult",
 	},
 	{
@@ -512,5 +512,20 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 		doc: "List the session's side-question records, newest first.",
 		result: { records: "BtwHistoryRecord[]" },
 		unwrap: "records",
+	},
+	{
+		name: "composer_prediction_request",
+		doc: "Predict the user's next message for the run that just finished; the alternatives arrive as a `composer_prediction` frame. A no-op when composer.predictions is off or the session is busy.",
+	},
+	{
+		name: "composer_prediction_feedback",
+		doc: "Report the current composer prediction as shown, inserted (`rank`: the alternative used), or dismissed; dismissing aborts a request still running.",
+		params: { action: "'shown' | 'accepted' | 'dismissed'", "rank?": "number.integer" },
+	},
+	{
+		name: "abort_compaction",
+		doc: "Cancel a running manual compaction, a background handoff included, without stopping the live turn; false when none was running.",
+		result: { aborted: "boolean" },
+		unwrap: "aborted",
 	},
 ];

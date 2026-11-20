@@ -1377,6 +1377,7 @@ pub struct CustomMessage {
 	pub timestamp: Option<f64>,
 	pub details: Option<Value>,
 	pub attribution: Option<Attribution>,
+	pub exclude_from_context: Option<bool>,
 	/// Every key not decoded into a declared field.
 	pub extra: Map<String, Value>,
 }
@@ -1405,6 +1406,9 @@ impl Serialize for CustomMessage {
 		if let Some(value) = &self.attribution {
 			map.serialize_entry("attribution", value)?;
 		}
+		if let Some(value) = &self.exclude_from_context {
+			map.serialize_entry("excludeFromContext", value)?;
+		}
 		for (key, value) in &self.extra {
 			match key.as_str() {
 				"role" if self.role.is_some() => continue,
@@ -1414,6 +1418,7 @@ impl Serialize for CustomMessage {
 				"timestamp" if self.timestamp.is_some() => continue,
 				"details" if self.details.is_some() => continue,
 				"attribution" if self.attribution.is_some() => continue,
+				"excludeFromContext" if self.exclude_from_context.is_some() => continue,
 				_ => {}
 			}
 			map.serialize_entry(key, value)?;
@@ -1433,6 +1438,7 @@ impl<'de> Deserialize<'de> for CustomMessage {
 			timestamp: take(&mut extra, "timestamp"),
 			details: take(&mut extra, "details"),
 			attribution: take(&mut extra, "attribution"),
+			exclude_from_context: take(&mut extra, "excludeFromContext"),
 			extra,
 		})
 	}
@@ -3102,6 +3108,8 @@ pub struct SessionState {
 	pub is_streaming: bool,
 	#[serde(rename = "isCompacting", default = "default_session_state_is_compacting")]
 	pub is_compacting: bool,
+	#[serde(rename = "isBackgroundCompacting", default = "default_session_state_is_background_compacting")]
+	pub is_background_compacting: bool,
 	#[serde(rename = "steeringMode", default = "default_session_state_steering_mode")]
 	pub steering_mode: QueueMode,
 	#[serde(rename = "followUpMode", default = "default_session_state_follow_up_mode")]
@@ -3127,6 +3135,8 @@ pub struct SessionState {
 	/// `/fast ultra` is on for the active model.
 	#[serde(rename = "ultrafastEnabled", default = "default_session_state_ultrafast_enabled")]
 	pub ultrafast_enabled: bool,
+	#[serde(rename = "fastModeUltrafast", default = "default_session_state_fast_mode_ultrafast")]
+	pub fast_mode_ultrafast: bool,
 	/// `/slow` applies to the active model.
 	#[serde(rename = "slowModeSupported", default = "default_session_state_slow_mode_supported")]
 	pub slow_mode_supported: bool,
@@ -3145,7 +3155,7 @@ pub struct SessionState {
 	pub message_count: i64,
 	#[serde(rename = "queuedMessageCount", default = "default_session_state_queued_message_count")]
 	pub queued_message_count: i64,
-	/// Background jobs or deliveries can still inject a follow-up and wake the session.
+	/// Background jobs, their deliveries, child agents or queued peer messages can still wake the session.
 	#[serde(rename = "hasPendingAsyncWork", default = "default_session_state_has_pending_async_work")]
 	pub has_pending_async_work: bool,
 	/// Idle with nothing queued or pending; same predicate as `session_settled`.
@@ -3217,6 +3227,17 @@ pub struct BashResult {
 	/// The embedded shell's final `ShellTrace` of the run; only when the caller asked for one.
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub trace: Option<Map<String, Value>>,
+	/// Set when the command overlapped another one on the session's persistent shell and ran in a fork of it.
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub fork: Option<ShellForkOutcome>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ShellForkOutcome {
+	/// What the command set carried back into the session's shell; `false`: it stayed in the fork.
+	pub carried: bool,
+	/// It left background jobs running in the fork, where later commands' `jobs`, `wait` and `%N` miss them.
+	pub jobs: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -3229,6 +3250,8 @@ pub struct LineRange {
 pub struct FastModeResult {
 	pub enabled: bool,
 	pub active: bool,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub ultrafast: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -3736,6 +3759,24 @@ impl CacheWarmingPhase {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CacheWarmingMethod {
+	#[serde(rename = "prewarm")]
+	Prewarm,
+	#[serde(rename = "replay")]
+	Replay,
+}
+
+impl CacheWarmingMethod {
+	/// Wire value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Prewarm => "prewarm",
+			Self::Replay => "replay",
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CacheWarmingOutcome {
 	#[serde(rename = "hit")]
 	Hit,
@@ -3912,7 +3953,7 @@ pub struct AutoCompactionEndEvent {
 	pub skipped: Option<bool>,
 }
 
-/// A manual compaction (`compact` command, `/compact`, extension `ctx.compact()`) began; the live turn is already aborted.
+/// A manual compaction began. Handoff mode leaves live turns running and applies between turns or when idle.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ManualCompactionStartEvent {
 	/// The `/compact <mode>` subcommand, when one was given.
@@ -3963,6 +4004,7 @@ pub struct AutoRetryEndEvent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CacheWarmingStartEvent {
 	pub phase: CacheWarmingPhase,
+	pub method: CacheWarmingMethod,
 	pub provider: String,
 	pub model: String,
 }
@@ -3971,6 +4013,7 @@ pub struct CacheWarmingStartEvent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CacheWarmingEndEvent {
 	pub phase: CacheWarmingPhase,
+	pub method: CacheWarmingMethod,
 	pub provider: String,
 	pub model: String,
 	pub outcome: CacheWarmingOutcome,
@@ -4088,7 +4131,7 @@ pub enum RpcAgentEvent {
 	ToolExecutionEnd(ToolExecutionEndEvent),
 	AutoCompactionStart(AutoCompactionStartEvent),
 	AutoCompactionEnd(AutoCompactionEndEvent),
-	/// A manual compaction (`compact` command, `/compact`, extension `ctx.compact()`) began; the live turn is already aborted.
+	/// A manual compaction began. Handoff mode leaves live turns running and applies between turns or when idle.
 	ManualCompactionStart(ManualCompactionStartEvent),
 	/// Outcome of the compaction announced by the matching `manual_compaction_start`.
 	ManualCompactionEnd(ManualCompactionEndEvent),
@@ -4617,6 +4660,18 @@ pub struct SelectUiRequest {
 	pub options: Vec<String>,
 	#[serde(rename = "optionDetails", default, skip_serializing_if = "Option::is_none")]
 	pub option_details: Option<Vec<SelectOptionDetail>>,
+	/// Index into `options` to focus first.
+	#[serde(rename = "initialIndex", default, skip_serializing_if = "Option::is_none")]
+	pub initial_index: Option<i64>,
+	/// Marker style for the first `markableCount` options.
+	#[serde(rename = "selectionMarker", default, skip_serializing_if = "Option::is_none")]
+	pub selection_marker: Option<SelectUiRequestSelectionMarker>,
+	/// For `checkbox`: indices into `options` currently checked. Authoritative; hosts render it per option.
+	#[serde(rename = "checkedIndices", default, skip_serializing_if = "Option::is_none")]
+	pub checked_indices: Option<Vec<i64>>,
+	/// Leading options that get a marker; trailing ones are actions. Defaults to all options when `selectionMarker` is set.
+	#[serde(rename = "markableCount", default, skip_serializing_if = "Option::is_none")]
+	pub markable_count: Option<i64>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub timeout: Option<i64>,
 }
@@ -5573,6 +5628,8 @@ pub struct OpenSessionParams {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SetFastModeParams {
 	pub enabled: bool,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub ultrafast: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -6155,6 +6212,18 @@ pub struct GetBtwHistoryResult {
 	pub records: Vec<BtwHistoryRecord>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ComposerPredictionFeedbackParams {
+	pub action: ComposerPredictionFeedbackParamsAction,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub rank: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AbortCompactionResult {
+	pub aborted: bool,
+}
+
 /// The constant `"image"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct LitImage;
@@ -6534,6 +6603,24 @@ impl DictationStateEventState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SelectUiRequestSelectionMarker {
+	#[serde(rename = "radio")]
+	Radio,
+	#[serde(rename = "checkbox")]
+	Checkbox,
+}
+
+impl SelectUiRequestSelectionMarker {
+	/// Wire value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Radio => "radio",
+			Self::Checkbox => "checkbox",
+		}
+	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FormSpanStyle {
 	#[serde(rename = "code")]
 	Code,
@@ -6662,6 +6749,27 @@ impl DiscoverProviderModelsParamsDiscoveryType {
 	}
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ComposerPredictionFeedbackParamsAction {
+	#[serde(rename = "shown")]
+	Shown,
+	#[serde(rename = "accepted")]
+	Accepted,
+	#[serde(rename = "dismissed")]
+	Dismissed,
+}
+
+impl ComposerPredictionFeedbackParamsAction {
+	/// Wire value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::Shown => "shown",
+			Self::Accepted => "accepted",
+			Self::Dismissed => "dismissed",
+		}
+	}
+}
+
 fn default_queued_messages_state_live_steered() -> i64 {
 	serde_json::from_str("0").expect("valid wire default")
 }
@@ -6671,6 +6779,10 @@ fn default_session_state_is_streaming() -> bool {
 }
 
 fn default_session_state_is_compacting() -> bool {
+	serde_json::from_str("false").expect("valid wire default")
+}
+
+fn default_session_state_is_background_compacting() -> bool {
 	serde_json::from_str("false").expect("valid wire default")
 }
 
@@ -6707,6 +6819,10 @@ fn default_session_state_ultrafast_supported() -> bool {
 }
 
 fn default_session_state_ultrafast_enabled() -> bool {
+	serde_json::from_str("false").expect("valid wire default")
+}
+
+fn default_session_state_fast_mode_ultrafast() -> bool {
 	serde_json::from_str("false").expect("valid wire default")
 }
 
@@ -6992,10 +7108,12 @@ impl Command for GetStateCommand {
 	}
 }
 
-/// Enable or disable fast mode for the session.
+/// Set Fast or, when the model supports it, Ultrafast serving for the session.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SetFastModeCommand {
 	pub enabled: bool,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub ultrafast: Option<bool>,
 }
 
 impl Command for SetFastModeCommand {
@@ -8213,5 +8331,53 @@ impl Command for GetBtwHistoryCommand {
 
 	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
 		serde_json::from_value::<GetBtwHistoryResult>(data.unwrap_or_else(|| Value::Object(Map::new()))).map(|result| result.records)
+	}
+}
+
+/// Predict the user's next message for the run that just finished; the alternatives arrive as a `composer_prediction` frame. A no-op when composer.predictions is off or the session is busy.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct ComposerPredictionRequestCommand {}
+
+impl Command for ComposerPredictionRequestCommand {
+	const NAME: &'static str = "composer_prediction_request";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = ();
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		let _ = data;
+		Ok(())
+	}
+}
+
+/// Report the current composer prediction as shown, inserted (`rank`: the alternative used), or dismissed; dismissing aborts a request still running.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ComposerPredictionFeedbackCommand {
+	pub action: ComposerPredictionFeedbackParamsAction,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub rank: Option<i64>,
+}
+
+impl Command for ComposerPredictionFeedbackCommand {
+	const NAME: &'static str = "composer_prediction_feedback";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = ();
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		let _ = data;
+		Ok(())
+	}
+}
+
+/// Cancel a running manual compaction, a background handoff included, without stopping the live turn; false when none was running.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct AbortCompactionCommand {}
+
+impl Command for AbortCompactionCommand {
+	const NAME: &'static str = "abort_compaction";
+	const TIMEOUT_MS: Option<u64> = None;
+	type Output = bool;
+
+	fn decode(data: Option<Value>) -> Result<Self::Output, serde_json::Error> {
+		serde_json::from_value::<AbortCompactionResult>(data.unwrap_or_else(|| Value::Object(Map::new()))).map(|result| result.aborted)
 	}
 }

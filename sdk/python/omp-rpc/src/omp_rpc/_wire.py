@@ -156,6 +156,11 @@ _CACHE_WARMING_PHASE_VALUES: Final[frozenset[str]] = frozenset({"streaming", "id
 _decode_cache_warming_phase = cast("Decoder[CacheWarmingPhase]", literal(_CACHE_WARMING_PHASE_VALUES))
 
 
+CacheWarmingMethod: TypeAlias = Literal["prewarm", "replay"]
+_CACHE_WARMING_METHOD_VALUES: Final[frozenset[str]] = frozenset({"prewarm", "replay"})
+_decode_cache_warming_method = cast("Decoder[CacheWarmingMethod]", literal(_CACHE_WARMING_METHOD_VALUES))
+
+
 CacheWarmingOutcome: TypeAlias = Literal["hit", "miss", "error", "aborted"]
 _CACHE_WARMING_OUTCOME_VALUES: Final[frozenset[str]] = frozenset({"hit", "miss", "error", "aborted"})
 _decode_cache_warming_outcome = cast("Decoder[CacheWarmingOutcome]", literal(_CACHE_WARMING_OUTCOME_VALUES))
@@ -371,6 +376,7 @@ class CustomMessage(TypedDict):
     timestamp: float
     details: NotRequired[JsonValue]
     attribution: NotRequired[Attribution]
+    excludeFromContext: NotRequired[bool]
 
 
 class HookMessage(TypedDict):
@@ -647,6 +653,7 @@ class SessionState:
     thinking_level: ThinkingLevel | None = None
     is_streaming: bool = False
     is_compacting: bool = False
+    is_background_compacting: bool = False
     steering_mode: QueueMode = "one-at-a-time"
     follow_up_mode: QueueMode = "one-at-a-time"
     interrupt_mode: InterruptMode = "immediate"
@@ -661,6 +668,7 @@ class SessionState:
     """`/fast ultra` (the OpenAI `ultrafast` tier) applies to the active model."""
     ultrafast_enabled: bool = False
     """`/fast ultra` is on for the active model."""
+    fast_mode_ultrafast: bool = False
     slow_mode_supported: bool = False
     """`/slow` applies to the active model."""
     slow_mode_enabled: bool = False
@@ -673,7 +681,7 @@ class SessionState:
     message_count: int = 0
     queued_message_count: int = 0
     has_pending_async_work: bool = False
-    """Background jobs or deliveries can still inject a follow-up and wake the session."""
+    """Background jobs, their deliveries, child agents or queued peer messages can still wake the session."""
     is_settled: bool = False
     """Idle with nothing queued or pending; same predicate as `session_settled`."""
     queued_messages: QueuedMessagesState = field(default_factory=lambda: parse_queued_messages_state({"steering": [], "followUp": [], "liveSteered": 0}, "queuedMessages"))
@@ -717,6 +725,16 @@ class BashResult:
     images: tuple[ImageContent, ...] | None = None
     trace: JsonObject | None = None
     """The embedded shell's final `ShellTrace` of the run; only when the caller asked for one."""
+    fork: ShellForkOutcome | None = None
+    """Set when the command overlapped another one on the session's persistent shell and ran in a fork of it."""
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class ShellForkOutcome:
+    carried: bool
+    """What the command set carried back into the session's shell; `false`: it stayed in the fork."""
+    jobs: bool
+    """It left background jobs running in the fork, where later commands' `jobs`, `wait` and `%N` miss them."""
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -729,6 +747,7 @@ class LineRange:
 class FastModeResult:
     enabled: bool
     active: bool
+    ultrafast: bool | None = None
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -1169,7 +1188,7 @@ class AutoCompactionEndEvent:
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class ManualCompactionStartEvent:
-    """A manual compaction (`compact` command, `/compact`, extension `ctx.compact()`) began; the live turn is already aborted."""
+    """A manual compaction began. Handoff mode leaves live turns running and applies between turns or when idle."""
     type: Literal["manual_compaction_start"] = "manual_compaction_start"
     mode: str | None = None
     """The `/compact <mode>` subcommand, when one was given."""
@@ -1213,6 +1232,7 @@ class CacheWarmingStartEvent:
     """A prompt-cache refresh was handed to the provider."""
     type: Literal["cache_warming_start"] = "cache_warming_start"
     phase: CacheWarmingPhase
+    method: CacheWarmingMethod
     provider: str
     model: str
 
@@ -1222,6 +1242,7 @@ class CacheWarmingEndEvent:
     """Outcome of the refresh announced by the matching `cache_warming_start`."""
     type: Literal["cache_warming_end"] = "cache_warming_end"
     phase: CacheWarmingPhase
+    method: CacheWarmingMethod
     provider: str
     model: str
     outcome: CacheWarmingOutcome
@@ -1572,6 +1593,14 @@ class SelectUiRequest:
     title: str
     options: tuple[str, ...]
     option_details: tuple[SelectOptionDetail, ...] | None = None
+    initial_index: int | None = None
+    """Index into `options` to focus first."""
+    selection_marker: Literal["radio", "checkbox"] | None = None
+    """Marker style for the first `markableCount` options."""
+    checked_indices: tuple[int, ...] | None = None
+    """For `checkbox`: indices into `options` currently checked. Authoritative; hosts render it per option."""
+    markable_count: int | None = None
+    """Leading options that get a marker; trailing ones are actions. Defaults to all options when `selectionMarker` is set."""
     timeout: int | None = None
 
 
@@ -1792,6 +1821,14 @@ class ExtensionUiRequest(ExtensionUiRequestMixin):
     title: str | None = None
     options: tuple[str, ...] | None = None
     option_details: tuple[SelectOptionDetail, ...] | None = None
+    initial_index: int | None = None
+    """Index into `options` to focus first."""
+    selection_marker: Literal["radio", "checkbox"] | None = None
+    """Marker style for the first `markableCount` options."""
+    checked_indices: tuple[int, ...] | None = None
+    """For `checkbox`: indices into `options` currently checked. Authoritative; hosts render it per option."""
+    markable_count: int | None = None
+    """Leading options that get a marker; trailing ones are actions. Defaults to all options when `selectionMarker` is set."""
     timeout: int | None = None
     message: str | None = None
     placeholder: str | None = None
@@ -2246,6 +2283,7 @@ def parse_session_state(value: object, path: str = "SessionState") -> SessionSta
         thinking_level=optional(payload, "thinkingLevel", _decode_thinking_level, path),
         is_streaming=defaulted(payload, "isStreaming", decode_bool, path, False),
         is_compacting=defaulted(payload, "isCompacting", decode_bool, path, False),
+        is_background_compacting=defaulted(payload, "isBackgroundCompacting", decode_bool, path, False),
         steering_mode=defaulted(payload, "steeringMode", _decode_queue_mode, path, "one-at-a-time"),
         follow_up_mode=defaulted(payload, "followUpMode", _decode_queue_mode, path, "one-at-a-time"),
         interrupt_mode=defaulted(payload, "interruptMode", _decode_interrupt_mode, path, "immediate"),
@@ -2257,6 +2295,7 @@ def parse_session_state(value: object, path: str = "SessionState") -> SessionSta
         fast_mode_supported=defaulted(payload, "fastModeSupported", decode_bool, path, False),
         ultrafast_supported=defaulted(payload, "ultrafastSupported", decode_bool, path, False),
         ultrafast_enabled=defaulted(payload, "ultrafastEnabled", decode_bool, path, False),
+        fast_mode_ultrafast=defaulted(payload, "fastModeUltrafast", decode_bool, path, False),
         slow_mode_supported=defaulted(payload, "slowModeSupported", decode_bool, path, False),
         slow_mode_enabled=defaulted(payload, "slowModeEnabled", decode_bool, path, False),
         slow_mode_scope=optional(payload, "slowModeScope", _decode_slow_mode_scope, path),
@@ -2300,6 +2339,15 @@ def parse_bash_result(value: object, path: str = "BashResult") -> BashResult:
         working_dir=optional(payload, "workingDir", decode_str, path),
         images=optional(payload, "images", array(parse_image_content), path),
         trace=optional(payload, "trace", decode_json_object, path),
+        fork=optional(payload, "fork", parse_shell_fork_outcome, path),
+    )
+
+
+def parse_shell_fork_outcome(value: object, path: str = "ShellForkOutcome") -> ShellForkOutcome:
+    payload = expect_object(value, path)
+    return ShellForkOutcome(
+        carried=required(payload, "carried", decode_bool, path),
+        jobs=required(payload, "jobs", decode_bool, path),
     )
 
 
@@ -2316,6 +2364,7 @@ def parse_fast_mode_result(value: object, path: str = "FastModeResult") -> FastM
     return FastModeResult(
         enabled=required(payload, "enabled", decode_bool, path),
         active=required(payload, "active", decode_bool, path),
+        ultrafast=optional(payload, "ultrafast", decode_bool, path),
     )
 
 
@@ -2839,6 +2888,7 @@ def parse_cache_warming_start_event(value: object, path: str = "CacheWarmingStar
     required(payload, "type", cast('Decoder[Literal["cache_warming_start"]]', literal(frozenset({"cache_warming_start"}))), path)
     return CacheWarmingStartEvent(
         phase=required(payload, "phase", _decode_cache_warming_phase, path),
+        method=required(payload, "method", _decode_cache_warming_method, path),
         provider=required(payload, "provider", decode_str, path),
         model=required(payload, "model", decode_str, path),
     )
@@ -2849,6 +2899,7 @@ def parse_cache_warming_end_event(value: object, path: str = "CacheWarmingEndEve
     required(payload, "type", cast('Decoder[Literal["cache_warming_end"]]', literal(frozenset({"cache_warming_end"}))), path)
     return CacheWarmingEndEvent(
         phase=required(payload, "phase", _decode_cache_warming_phase, path),
+        method=required(payload, "method", _decode_cache_warming_method, path),
         provider=required(payload, "provider", decode_str, path),
         model=required(payload, "model", decode_str, path),
         outcome=required(payload, "outcome", _decode_cache_warming_outcome, path),
@@ -3246,6 +3297,10 @@ def parse_select_ui_request(value: object, path: str = "SelectUiRequest") -> Sel
         title=required(payload, "title", decode_str, path),
         options=required(payload, "options", array(decode_str), path),
         option_details=optional(payload, "optionDetails", array(parse_select_option_detail), path),
+        initial_index=optional(payload, "initialIndex", decode_int, path),
+        selection_marker=optional(payload, "selectionMarker", cast('Decoder[Literal["radio", "checkbox"]]', literal(frozenset({"radio", "checkbox"}))), path),
+        checked_indices=optional(payload, "checkedIndices", array(decode_int), path),
+        markable_count=optional(payload, "markableCount", decode_int, path),
         timeout=optional(payload, "timeout", decode_int, path),
     )
 
@@ -3500,6 +3555,10 @@ def parse_extension_ui_request(value: object, path: str = "ExtensionUiRequest") 
         title=optional(payload, "title", decode_str, path),
         options=optional(payload, "options", array(decode_str), path),
         option_details=optional(payload, "optionDetails", array(parse_select_option_detail), path),
+        initial_index=optional(payload, "initialIndex", decode_int, path),
+        selection_marker=optional(payload, "selectionMarker", cast('Decoder[Literal["radio", "checkbox"]]', literal(frozenset({"radio", "checkbox"}))), path),
+        checked_indices=optional(payload, "checkedIndices", array(decode_int), path),
+        markable_count=optional(payload, "markableCount", decode_int, path),
         timeout=optional(payload, "timeout", decode_int, path),
         message=optional(payload, "message", decode_str, path),
         placeholder=optional(payload, "placeholder", decode_str, path),
@@ -3834,10 +3893,12 @@ class WireClient:
         params: dict[str, object] = {}
         return parse_session_state(self._command("get_state", params), "get_state")
 
-    def set_fast_mode(self, enabled: bool) -> FastModeResult:
-        """Enable or disable fast mode for the session."""
+    def set_fast_mode(self, *, enabled: bool, ultrafast: bool | None = None) -> FastModeResult:
+        """Set Fast or, when the model supports it, Ultrafast serving for the session."""
         params: dict[str, object] = {}
         params["enabled"] = enabled
+        if ultrafast is not None:
+            params["ultrafast"] = ultrafast
         return parse_fast_mode_result(self._command("set_fast_mode", params), "set_fast_mode")
 
     def set_ultrafast_mode(self, enabled: bool) -> FastModeResult:
@@ -4295,6 +4356,24 @@ class WireClient:
         params: dict[str, object] = {}
         return required(expect_object(self._command("get_btw_history", params), "get_btw_history"), "records", array(parse_btw_history_record), "get_btw_history")
 
+    def composer_prediction_request(self) -> None:
+        """Predict the user's next message for the run that just finished; the alternatives arrive as a `composer_prediction` frame. A no-op when composer.predictions is off or the session is busy."""
+        params: dict[str, object] = {}
+        self._command("composer_prediction_request", params)
+
+    def composer_prediction_feedback(self, action: Literal["shown", "accepted", "dismissed"], *, rank: int | None = None) -> None:
+        """Report the current composer prediction as shown, inserted (`rank`: the alternative used), or dismissed; dismissing aborts a request still running."""
+        params: dict[str, object] = {}
+        params["action"] = action
+        if rank is not None:
+            params["rank"] = rank
+        self._command("composer_prediction_feedback", params)
+
+    def abort_compaction(self) -> bool:
+        """Cancel a running manual compaction, a background handoff included, without stopping the live turn; false when none was running."""
+        params: dict[str, object] = {}
+        return required(expect_object(self._command("abort_compaction", params), "abort_compaction"), "aborted", decode_bool, "abort_compaction")
+
     def on_ready(self, listener: Callable[[ReadyEvent], None]) -> Callable[[], None]:
         """Subscribe to `ready`: First frame after startup; transport fields are absent on servers without protocol v2."""
         return self._listen("ready", listener)
@@ -4436,7 +4515,7 @@ class WireClient:
         return self._listen("auto_compaction_end", listener)
 
     def on_manual_compaction_start(self, listener: Callable[[ManualCompactionStartEvent], None]) -> Callable[[], None]:
-        """Subscribe to `manual_compaction_start`: A manual compaction (`compact` command, `/compact`, extension `ctx.compact()`) began; the live turn is already aborted."""
+        """Subscribe to `manual_compaction_start`: A manual compaction began. Handoff mode leaves live turns running and applies between turns or when idle."""
         return self._listen("manual_compaction_start", listener)
 
     def on_manual_compaction_end(self, listener: Callable[[ManualCompactionEndEvent], None]) -> Callable[[], None]:
@@ -4565,6 +4644,7 @@ __all__ = [
     "BtwRecordEvent",
     "BtwStatus",
     "CacheWarmingEndEvent",
+    "CacheWarmingMethod",
     "CacheWarmingMode",
     "CacheWarmingOutcome",
     "CacheWarmingPhase",
@@ -4691,6 +4771,7 @@ __all__ = [
     "SetStatusUiRequest",
     "SetTitleUiRequest",
     "SetWidgetUiRequest",
+    "ShellForkOutcome",
     "SlashCommandInput",
     "SlashCommandSource",
     "SlashSubcommand",
@@ -4891,6 +4972,7 @@ __all__ = [
     "parse_set_status_ui_request",
     "parse_set_title_ui_request",
     "parse_set_widget_ui_request",
+    "parse_shell_fork_outcome",
     "parse_slash_command_input",
     "parse_slash_subcommand",
     "parse_subagent_event",

@@ -356,7 +356,7 @@ describe("RPC fast mode with unsupported Fireworks model and priority tier", () 
 		});
 
 		const disabled = await client.setFastMode(false);
-		expect(disabled).toEqual({ enabled: false, active: true });
+		expect(disabled).toEqual({ enabled: false, active: true, ultrafast: false });
 
 		const state = await client.getState();
 		expect(state.fastModeEnabled).toBe(false);

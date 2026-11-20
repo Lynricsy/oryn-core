@@ -62,6 +62,7 @@ import type {
 	RestoredQueuedMessageWithDelivery,
 } from "../../session/agent-session-types";
 import type { BtwHistoryRecord } from "../../session/btw-history";
+import type { WireSessionEvent } from "../../session/loop-end-wire";
 import type { SessionLeaseReport } from "../../session/session-storage";
 import type { CacheWarmingMode } from "../../session/cache-warmer";
 import type { FileEntry, SessionEntry, SessionTreeNode } from "../../session/session-entries";
@@ -129,7 +130,7 @@ export type RpcCommand =
 
 	// State
 	| { id?: string; type: "get_state" }
-	| { id?: string; type: "set_fast_mode"; enabled: boolean }
+	| { id?: string; type: "set_fast_mode"; enabled: boolean; ultrafast?: boolean }
 	| { id?: string; type: "set_ultrafast_mode"; enabled: boolean }
 	| { id?: string; type: "set_slow_mode"; enabled: boolean }
 	| {
@@ -714,6 +715,11 @@ export type RpcCommand =
 	| { id?: string; type: "btw_cancel"; recordId?: string }
 	| { id?: string; type: "btw_inject"; recordId: string }
 	| { id?: string; type: "get_btw_history" }
+	// Composer predictions; alternatives arrive as `composer_prediction` frames
+	| { id?: string; type: "composer_prediction_request" }
+	| { id?: string; type: "composer_prediction_feedback"; action: RpcComposerPredictionFeedback; rank?: number }
+	// Cancel a manual compaction (a background handoff included) and keep the live turn
+	| { id?: string; type: "abort_compaction" }
 	| OrynRpcCommand
 	| OrynUiParityRpcCommand
 	| OrynToolExecRpcCommand;
@@ -732,6 +738,8 @@ export interface RpcSessionState {
 	availableThinkingLevels?: ThinkingLevel[];
 	isStreaming: boolean;
 	isCompacting: boolean;
+	/** Manual compaction that prepares without blocking the current turn. */
+	isBackgroundCompacting?: boolean;
 	steeringMode: "all" | "one-at-a-time";
 	followUpMode: "all" | "one-at-a-time";
 	interruptMode: "immediate" | "wait";
@@ -749,6 +757,8 @@ export interface RpcSessionState {
 	ultrafastSupported: boolean;
 	/** `/fast ultra` 对当前模型已开启。 */
 	ultrafastEnabled: boolean;
+	/** Fast mode runs at the model's Ultrafast tier; absent from hosts that predate it. */
+	fastModeUltrafast?: boolean;
 	/** `/slow` applies to the active model (flex tier on OpenAI/Google, low priority on Claude subscriptions). */
 	slowModeSupported: boolean;
 	/** `/slow` is on for the active model; always `false` when `slowModeSupported` is `false`. */
@@ -763,7 +773,7 @@ export interface RpcSessionState {
 	tokensPerSecond: number | null;
 	messageCount: number;
 	queuedMessageCount: number;
-	/** Background jobs or deliveries can still inject a follow-up and wake the session. */
+	/** Background jobs, their deliveries, child agents or queued peer messages can still wake the session. */
 	hasPendingAsyncWork: boolean;
 	/** Same predicate as `session_settled`: idle with nothing queued or pending. */
 	isSettled: boolean;
@@ -2461,7 +2471,7 @@ export type RpcResponse =
 			type: "response";
 			command: "set_fast_mode";
 			success: true;
-			data: { enabled: boolean; active: boolean };
+			data: { enabled: boolean; active: boolean; ultrafast: boolean };
 	  }
 	| {
 			id?: string;
@@ -3820,6 +3830,9 @@ export type RpcResponse =
 			success: true;
 			data: { records: readonly RpcBtwHistoryRecord[] };
 	  }
+	| { id?: string; type: "response"; command: "composer_prediction_request"; success: true }
+	| { id?: string; type: "response"; command: "composer_prediction_feedback"; success: true }
+	| { id?: string; type: "response"; command: "abort_compaction"; success: true; data: { aborted: boolean } }
 	| OrynRpcResponse
 	| OrynUiParityRpcResponse
 	| OrynToolExecRpcResponse
@@ -3864,6 +3877,18 @@ export interface RpcBtwDeltaFrame {
 export interface RpcBtwRecordFrame {
 	type: "btw_record";
 	record: RpcBtwHistoryRecord;
+}
+
+/** How the host used the composer prediction it was offered. */
+export type RpcComposerPredictionFeedback = "shown" | "accepted" | "dismissed";
+
+/**
+ * The composer prediction for the conversation as it stands: the user's likely next message,
+ * most likely first. Empty when a prediction was withdrawn (dismissed, or the conversation moved on).
+ */
+export interface RpcComposerPredictionFrame {
+	type: "composer_prediction";
+	choices: string[];
 }
 
 // ============================================================================
@@ -3928,9 +3953,7 @@ export type RpcDeltaMessageUpdateFrame = Omit<
 };
 
 /** Session event as written to stdout by default: message lifecycle events carry a `messageId`. */
-export type RpcAgentSessionEventFrame =
-	| Exclude<AgentSessionEvent, { type: RpcMessageEventType }>
-	| RpcMessageEventFrame;
+export type RpcAgentSessionEventFrame = Exclude<WireSessionEvent, { type: RpcMessageEventType }> | RpcMessageEventFrame;
 
 /** Every session event shape RPC mode can write, including the opt-in `messageUpdates: "delta"` projection. */
 export type RpcProjectedSessionEventFrame = RpcAgentSessionEventFrame | RpcDeltaMessageUpdateFrame;
@@ -3974,6 +3997,14 @@ export type RpcExtensionUIRequest =
 			title: string;
 			options: string[];
 			optionDetails?: RpcExtensionUISelectOptionDetail[];
+			/** Index into `options` to focus first. */
+			initialIndex?: number;
+			/** Marker style for the first `markableCount` options. */
+			selectionMarker?: "radio" | "checkbox";
+			/** For `checkbox`: indices into `options` currently checked. */
+			checkedIndices?: number[];
+			/** Leading options that get a marker; trailing ones are actions. */
+			markableCount?: number;
 			timeout?: number;
 	  }
 	| {

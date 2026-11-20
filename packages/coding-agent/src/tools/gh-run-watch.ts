@@ -711,11 +711,11 @@ export async function fetchFailedJobLogs(
 	const ref = parseRepoRef(repo);
 	return Promise.all(
 		failedJobs.map(async entry => {
-			const result = await github.run(
-				cwd,
-				["api", ...ghApiHostArgs(ref), `/repos/${ref.slug}/actions/jobs/${entry.job.id}/logs`],
-				signal,
-			);
+			const args = ["api", ...ghApiHostArgs(ref), `/repos/${ref.slug}/actions/jobs/${entry.job.id}/logs`];
+			let result = await github.run(cwd, [...args, "--allow-escape-sequences"], signal);
+			if (result.exitCode !== 0 && /^unknown flag: --allow-escape-sequences(?:\r?\n|$)/.test(result.stderr)) {
+				result = await github.run(cwd, args, signal);
+			}
 			const fullLog = result.exitCode === 0 ? normalizeBlock(result.stdout) : undefined;
 			const logTail = fullLog ? tailLogLines(fullLog, tail) : undefined;
 			const stderr = normalizeText(result.stderr);
@@ -845,7 +845,6 @@ export async function executeRunWatch(
 				});
 				const artifactId = await saveArtifactText(
 					session,
-					toolName,
 					formatRunWatchResult(repo, run, failedJobLogs, tail, { mode: "full" }),
 				);
 				return buildTextResult(
@@ -958,7 +957,6 @@ export async function executeRunWatch(
 			});
 			const artifactId = await saveArtifactText(
 				session,
-				toolName,
 				formatCommitRunWatchResult(repo, headSha, branch, runs, failedJobLogs, tail, { mode: "full" }),
 			);
 			return buildTextResult(

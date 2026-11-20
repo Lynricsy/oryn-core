@@ -189,6 +189,7 @@ export interface CustomMessage {
 	timestamp: number;
 	details?: unknown;
 	attribution?: Attribution;
+	excludeFromContext?: boolean;
 }
 
 export interface HookMessage {
@@ -494,6 +495,7 @@ export interface SessionState {
 	thinkingLevel?: ThinkingLevel;
 	isStreaming?: boolean;
 	isCompacting?: boolean;
+	isBackgroundCompacting?: boolean;
 	steeringMode?: QueueMode;
 	followUpMode?: QueueMode;
 	interruptMode?: InterruptMode;
@@ -508,6 +510,7 @@ export interface SessionState {
 	ultrafastSupported?: boolean;
 	/** `/fast ultra` is on for the active model. */
 	ultrafastEnabled?: boolean;
+	fastModeUltrafast?: boolean;
 	/** `/slow` applies to the active model. */
 	slowModeSupported?: boolean;
 	/** `/slow` is on for the active model; always `false` when `slowModeSupported` is `false`. */
@@ -519,7 +522,7 @@ export interface SessionState {
 	tokensPerSecond?: number | null;
 	messageCount?: number;
 	queuedMessageCount?: number;
-	/** Background jobs or deliveries can still inject a follow-up and wake the session. */
+	/** Background jobs, their deliveries, child agents or queued peer messages can still wake the session. */
 	hasPendingAsyncWork?: boolean;
 	/** Idle with nothing queued or pending; same predicate as `session_settled`. */
 	isSettled?: boolean;
@@ -563,6 +566,15 @@ export interface BashResult {
 	images?: ImageContent[];
 	/** The embedded shell's final `ShellTrace` of the run; only when the caller asked for one. */
 	trace?: Record<string, unknown>;
+	/** Set when the command overlapped another one on the session's persistent shell and ran in a fork of it. */
+	fork?: ShellForkOutcome;
+}
+
+export interface ShellForkOutcome {
+	/** What the command set carried back into the session's shell; `false`: it stayed in the fork. */
+	carried: boolean;
+	/** It left background jobs running in the fork, where later commands' `jobs`, `wait` and `%N` miss them. */
+	jobs: boolean;
 }
 
 export interface LineRange {
@@ -573,6 +585,7 @@ export interface LineRange {
 export interface FastModeResult {
 	enabled: boolean;
 	active: boolean;
+	ultrafast?: boolean;
 }
 
 export interface CompactionResult {
@@ -872,6 +885,8 @@ export type AutoCompactionAction = "context-full" | "remote" | "handoff" | "shak
 
 export type CacheWarmingPhase = "streaming" | "idle";
 
+export type CacheWarmingMethod = "prewarm" | "replay";
+
 export type CacheWarmingOutcome = "hit" | "miss" | "error" | "aborted";
 
 export type NotifyType = "info" | "warning" | "error";
@@ -978,7 +993,7 @@ export interface AutoCompactionEndEvent {
 	skipped?: boolean;
 }
 
-/** A manual compaction (`compact` command, `/compact`, extension `ctx.compact()`) began; the live turn is already aborted. */
+/** A manual compaction began. Handoff mode leaves live turns running and applies between turns or when idle. */
 export interface ManualCompactionStartEvent {
 	type: "manual_compaction_start";
 	/** The `/compact <mode>` subcommand, when one was given. */
@@ -1019,6 +1034,7 @@ export interface AutoRetryEndEvent {
 export interface CacheWarmingStartEvent {
 	type: "cache_warming_start";
 	phase: CacheWarmingPhase;
+	method: CacheWarmingMethod;
 	provider: string;
 	model: string;
 }
@@ -1027,6 +1043,7 @@ export interface CacheWarmingStartEvent {
 export interface CacheWarmingEndEvent {
 	type: "cache_warming_end";
 	phase: CacheWarmingPhase;
+	method: CacheWarmingMethod;
 	provider: string;
 	model: string;
 	outcome: CacheWarmingOutcome;
@@ -1353,6 +1370,14 @@ export interface SelectUiRequest {
 	title: string;
 	options: string[];
 	optionDetails?: SelectOptionDetail[];
+	/** Index into `options` to focus first. */
+	initialIndex?: number;
+	/** Marker style for the first `markableCount` options. */
+	selectionMarker?: "radio" | "checkbox";
+	/** For `checkbox`: indices into `options` currently checked. Authoritative; hosts render it per option. */
+	checkedIndices?: number[];
+	/** Leading options that get a marker; trailing ones are actions. Defaults to all options when `selectionMarker` is set. */
+	markableCount?: number;
 	timeout?: number;
 }
 
@@ -1763,6 +1788,7 @@ export interface OpenSessionParams {
 
 export interface SetFastModeParams {
 	enabled: boolean;
+	ultrafast?: boolean;
 }
 
 export interface SetUltrafastModeParams {
@@ -2177,6 +2203,15 @@ export interface GetBtwHistoryResult {
 	records: BtwHistoryRecord[];
 }
 
+export interface ComposerPredictionFeedbackParams {
+	action: "shown" | "accepted" | "dismissed";
+	rank?: number;
+}
+
+export interface AbortCompactionResult {
+	aborted: boolean;
+}
+
 /** Every RPC command's parameters and successful response `data`. */
 export interface RpcWireCommands {
 	negotiate_protocol: { params: NegotiateProtocolParams; result: NegotiateProtocolResult };
@@ -2262,4 +2297,7 @@ export interface RpcWireCommands {
 	btw: { params: BtwParams; result: BtwResult };
 	btw_cancel: { params: BtwCancelParams; result: BtwCancelResult };
 	get_btw_history: { params: undefined; result: GetBtwHistoryResult };
+	composer_prediction_request: { params: undefined; result: undefined };
+	composer_prediction_feedback: { params: ComposerPredictionFeedbackParams; result: undefined };
+	abort_compaction: { params: undefined; result: AbortCompactionResult };
 }

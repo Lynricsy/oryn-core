@@ -4,12 +4,12 @@ import { type AgentSession, SessionBusyError } from "@oh-my-pi/pi-coding-agent/s
 
 describe("RPC switch_leaf during manual maintenance", () => {
 	// Compaction and handoff run beside the serial queue; the leaf must not move under them.
-	for (const busy of [{ isCompacting: true }, { isGeneratingHandoff: true }]) {
+	for (const busy of [{ isCompacting: true }, { isBackgroundCompacting: true }]) {
 		it(`refuses without moving the leaf while ${Object.keys(busy)[0]}`, async () => {
 			const navigateTree = vi.fn(async () => ({ cancelled: false }));
 			const session = {
 				isCompacting: false,
-				isGeneratingHandoff: false,
+				isBackgroundCompacting: false,
 				...busy,
 				navigateTree,
 			} as unknown as AgentSession;

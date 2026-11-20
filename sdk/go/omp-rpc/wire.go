@@ -847,12 +847,13 @@ func (v PythonExecutionMessage) MarshalJSON() ([]byte, error) {
 }
 
 type CustomMessage struct {
-	CustomType  string          `json:"customType"`
-	Content     MessageContent  `json:"content"`
-	Display     bool            `json:"display"`
-	Timestamp   float64         `json:"timestamp"`
-	Details     json.RawMessage `json:"details,omitempty"`
-	Attribution *Attribution    `json:"attribution,omitempty"`
+	CustomType         string          `json:"customType"`
+	Content            MessageContent  `json:"content"`
+	Display            bool            `json:"display"`
+	Timestamp          float64         `json:"timestamp"`
+	Details            json.RawMessage `json:"details,omitempty"`
+	Attribution        *Attribution    `json:"attribution,omitempty"`
+	ExcludeFromContext *bool           `json:"excludeFromContext,omitempty"`
 	// Extra holds undeclared keys and declared keys whose value did not decode (that field stays zero).
 	// Encoding writes them back, over a declared field with the same key.
 	Extra map[string]json.RawMessage `json:"-"`
@@ -872,6 +873,7 @@ func (v *CustomMessage) decodeFrom(raw map[string]json.RawMessage) error {
 	d.required("timestamp", &out.Timestamp)
 	d.optional("details", &out.Details)
 	d.optional("attribution", &out.Attribution)
+	d.optional("excludeFromContext", &out.ExcludeFromContext)
 	out.Extra = d.rest()
 	if d.err != nil {
 		return d.err
@@ -2531,25 +2533,27 @@ func (v *UsageLimitState) decodeFrom(raw map[string]json.RawMessage) error {
 }
 
 type SessionState struct {
-	SessionID             string         `json:"sessionId"`
-	Model                 *ModelInfo     `json:"model,omitempty"`
-	ThinkingLevel         *ThinkingLevel `json:"thinkingLevel,omitempty"`
-	IsStreaming           bool           `json:"isStreaming"`
-	IsCompacting          bool           `json:"isCompacting"`
-	SteeringMode          QueueMode      `json:"steeringMode"`
-	FollowUpMode          QueueMode      `json:"followUpMode"`
-	InterruptMode         InterruptMode  `json:"interruptMode"`
-	SessionFile           *string        `json:"sessionFile,omitempty"`
-	SessionName           *string        `json:"sessionName,omitempty"`
-	AutoCompactionEnabled bool           `json:"autoCompactionEnabled"`
-	FastModeEnabled       bool           `json:"fastModeEnabled"`
-	FastModeActive        bool           `json:"fastModeActive"`
+	SessionID              string         `json:"sessionId"`
+	Model                  *ModelInfo     `json:"model,omitempty"`
+	ThinkingLevel          *ThinkingLevel `json:"thinkingLevel,omitempty"`
+	IsStreaming            bool           `json:"isStreaming"`
+	IsCompacting           bool           `json:"isCompacting"`
+	IsBackgroundCompacting bool           `json:"isBackgroundCompacting"`
+	SteeringMode           QueueMode      `json:"steeringMode"`
+	FollowUpMode           QueueMode      `json:"followUpMode"`
+	InterruptMode          InterruptMode  `json:"interruptMode"`
+	SessionFile            *string        `json:"sessionFile,omitempty"`
+	SessionName            *string        `json:"sessionName,omitempty"`
+	AutoCompactionEnabled  bool           `json:"autoCompactionEnabled"`
+	FastModeEnabled        bool           `json:"fastModeEnabled"`
+	FastModeActive         bool           `json:"fastModeActive"`
 	// `/fast` (the `priority` tier) applies to the active model.
 	FastModeSupported bool `json:"fastModeSupported"`
 	// `/fast ultra` (the OpenAI `ultrafast` tier) applies to the active model.
 	UltrafastSupported bool `json:"ultrafastSupported"`
 	// `/fast ultra` is on for the active model.
-	UltrafastEnabled bool `json:"ultrafastEnabled"`
+	UltrafastEnabled  bool `json:"ultrafastEnabled"`
+	FastModeUltrafast bool `json:"fastModeUltrafast"`
 	// `/slow` applies to the active model.
 	SlowModeSupported bool `json:"slowModeSupported"`
 	// `/slow` is on for the active model; always `false` when `slowModeSupported` is `false`.
@@ -2561,7 +2565,7 @@ type SessionState struct {
 	TokensPerSecond    *float64         `json:"tokensPerSecond"`
 	MessageCount       int64            `json:"messageCount"`
 	QueuedMessageCount int64            `json:"queuedMessageCount"`
-	// Background jobs or deliveries can still inject a follow-up and wake the session.
+	// Background jobs, their deliveries, child agents or queued peer messages can still wake the session.
 	HasPendingAsyncWork bool `json:"hasPendingAsyncWork"`
 	// Idle with nothing queued or pending; same predicate as `session_settled`.
 	IsSettled      bool                `json:"isSettled"`
@@ -2587,6 +2591,7 @@ func (v *SessionState) decodeFrom(raw map[string]json.RawMessage) error {
 	d.optional("thinkingLevel", &out.ThinkingLevel)
 	d.defaulted("isStreaming", &out.IsStreaming, `false`)
 	d.defaulted("isCompacting", &out.IsCompacting, `false`)
+	d.defaulted("isBackgroundCompacting", &out.IsBackgroundCompacting, `false`)
 	d.defaulted("steeringMode", &out.SteeringMode, `"one-at-a-time"`)
 	d.defaulted("followUpMode", &out.FollowUpMode, `"one-at-a-time"`)
 	d.defaulted("interruptMode", &out.InterruptMode, `"immediate"`)
@@ -2598,6 +2603,7 @@ func (v *SessionState) decodeFrom(raw map[string]json.RawMessage) error {
 	d.defaulted("fastModeSupported", &out.FastModeSupported, `false`)
 	d.defaulted("ultrafastSupported", &out.UltrafastSupported, `false`)
 	d.defaulted("ultrafastEnabled", &out.UltrafastEnabled, `false`)
+	d.defaulted("fastModeUltrafast", &out.FastModeUltrafast, `false`)
 	d.defaulted("slowModeSupported", &out.SlowModeSupported, `false`)
 	d.defaulted("slowModeEnabled", &out.SlowModeEnabled, `false`)
 	d.optional("slowModeScope", &out.SlowModeScope)
@@ -2651,6 +2657,8 @@ type BashResult struct {
 	Images        []ImageContent             `json:"images,omitempty"`
 	// The embedded shell's final `ShellTrace` of the run; only when the caller asked for one.
 	Trace map[string]json.RawMessage `json:"trace,omitempty"`
+	// Set when the command overlapped another one on the session's persistent shell and ran in a fork of it.
+	Fork *ShellForkOutcome `json:"fork,omitempty"`
 }
 
 func (v *BashResult) UnmarshalJSON(data []byte) error {
@@ -2682,6 +2690,30 @@ func (v *BashResult) decodeFrom(raw map[string]json.RawMessage) error {
 	d.optional("workingDir", &out.WorkingDir)
 	d.optional("images", &out.Images)
 	d.optional("trace", &out.Trace)
+	d.optional("fork", &out.Fork)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type ShellForkOutcome struct {
+	// What the command set carried back into the session's shell; `false`: it stayed in the fork.
+	Carried bool `json:"carried"`
+	// It left background jobs running in the fork, where later commands' `jobs`, `wait` and `%N` miss them.
+	Jobs bool `json:"jobs"`
+}
+
+func (v *ShellForkOutcome) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "ShellForkOutcome", v.decodeFrom)
+}
+
+func (v *ShellForkOutcome) decodeFrom(raw map[string]json.RawMessage) error {
+	var out ShellForkOutcome
+	d := fieldDecoder{raw: raw, owner: "ShellForkOutcome"}
+	d.required("carried", &out.Carried)
+	d.required("jobs", &out.Jobs)
 	if d.err != nil {
 		return d.err
 	}
@@ -2711,8 +2743,9 @@ func (v *LineRange) decodeFrom(raw map[string]json.RawMessage) error {
 }
 
 type FastModeResult struct {
-	Enabled bool `json:"enabled"`
-	Active  bool `json:"active"`
+	Enabled   bool  `json:"enabled"`
+	Active    bool  `json:"active"`
+	Ultrafast *bool `json:"ultrafast,omitempty"`
 }
 
 func (v *FastModeResult) UnmarshalJSON(data []byte) error {
@@ -2724,6 +2757,7 @@ func (v *FastModeResult) decodeFrom(raw map[string]json.RawMessage) error {
 	d := fieldDecoder{raw: raw, owner: "FastModeResult"}
 	d.required("enabled", &out.Enabled)
 	d.required("active", &out.Active)
+	d.optional("ultrafast", &out.Ultrafast)
 	if d.err != nil {
 		return d.err
 	}
@@ -3821,6 +3855,26 @@ func (v *CacheWarmingPhase) UnmarshalJSON(data []byte) error {
 	return unknownValue("CacheWarmingPhase", s)
 }
 
+type CacheWarmingMethod string
+
+const (
+	CacheWarmingMethodPrewarm CacheWarmingMethod = "prewarm"
+	CacheWarmingMethodReplay  CacheWarmingMethod = "replay"
+)
+
+func (v *CacheWarmingMethod) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "CacheWarmingMethod")
+	if err != nil {
+		return err
+	}
+	switch value := CacheWarmingMethod(s); value {
+	case CacheWarmingMethodPrewarm, CacheWarmingMethodReplay:
+		*v = value
+		return nil
+	}
+	return unknownValue("CacheWarmingMethod", s)
+}
+
 type CacheWarmingOutcome string
 
 const (
@@ -4252,7 +4306,7 @@ func (v AutoCompactionEndEvent) MarshalJSON() ([]byte, error) {
 	return encodeObject(plain(v), `"type":"auto_compaction_end"`, nil)
 }
 
-// A manual compaction (`compact` command, `/compact`, extension `ctx.compact()`) began; the live turn is already aborted.
+// A manual compaction began. Handoff mode leaves live turns running and applies between turns or when idle.
 type ManualCompactionStartEvent struct {
 	// The `/compact <mode>` subcommand, when one was given.
 	Mode *string `json:"mode,omitempty"`
@@ -4381,9 +4435,10 @@ func (v AutoRetryEndEvent) MarshalJSON() ([]byte, error) {
 
 // A prompt-cache refresh was handed to the provider.
 type CacheWarmingStartEvent struct {
-	Phase    CacheWarmingPhase `json:"phase"`
-	Provider string            `json:"provider"`
-	Model    string            `json:"model"`
+	Phase    CacheWarmingPhase  `json:"phase"`
+	Method   CacheWarmingMethod `json:"method"`
+	Provider string             `json:"provider"`
+	Model    string             `json:"model"`
 }
 
 func (v *CacheWarmingStartEvent) UnmarshalJSON(data []byte) error {
@@ -4395,6 +4450,7 @@ func (v *CacheWarmingStartEvent) decodeFrom(raw map[string]json.RawMessage) erro
 	d := fieldDecoder{raw: raw, owner: "CacheWarmingStartEvent"}
 	d.constant("type", "cache_warming_start")
 	d.required("phase", &out.Phase)
+	d.required("method", &out.Method)
 	d.required("provider", &out.Provider)
 	d.required("model", &out.Model)
 	if d.err != nil {
@@ -4412,6 +4468,7 @@ func (v CacheWarmingStartEvent) MarshalJSON() ([]byte, error) {
 // Outcome of the refresh announced by the matching `cache_warming_start`.
 type CacheWarmingEndEvent struct {
 	Phase    CacheWarmingPhase   `json:"phase"`
+	Method   CacheWarmingMethod  `json:"method"`
 	Provider string              `json:"provider"`
 	Model    string              `json:"model"`
 	Outcome  CacheWarmingOutcome `json:"outcome"`
@@ -4430,6 +4487,7 @@ func (v *CacheWarmingEndEvent) decodeFrom(raw map[string]json.RawMessage) error 
 	d := fieldDecoder{raw: raw, owner: "CacheWarmingEndEvent"}
 	d.constant("type", "cache_warming_end")
 	d.required("phase", &out.Phase)
+	d.required("method", &out.Method)
 	d.required("provider", &out.Provider)
 	d.required("model", &out.Model)
 	d.required("outcome", &out.Outcome)
@@ -5904,7 +5962,15 @@ type SelectUiRequest struct {
 	Title         string               `json:"title"`
 	Options       []string             `json:"options"`
 	OptionDetails []SelectOptionDetail `json:"optionDetails,omitempty"`
-	Timeout       *int64               `json:"timeout,omitempty"`
+	// Index into `options` to focus first.
+	InitialIndex *int64 `json:"initialIndex,omitempty"`
+	// Marker style for the first `markableCount` options.
+	SelectionMarker *SelectUiRequestSelectionMarker `json:"selectionMarker,omitempty"`
+	// For `checkbox`: indices into `options` currently checked. Authoritative; hosts render it per option.
+	CheckedIndices []int64 `json:"checkedIndices,omitempty"`
+	// Leading options that get a marker; trailing ones are actions. Defaults to all options when `selectionMarker` is set.
+	MarkableCount *int64 `json:"markableCount,omitempty"`
+	Timeout       *int64 `json:"timeout,omitempty"`
 }
 
 func (v *SelectUiRequest) UnmarshalJSON(data []byte) error {
@@ -5920,6 +5986,10 @@ func (v *SelectUiRequest) decodeFrom(raw map[string]json.RawMessage) error {
 	d.required("title", &out.Title)
 	d.required("options", &out.Options)
 	d.optional("optionDetails", &out.OptionDetails)
+	d.optional("initialIndex", &out.InitialIndex)
+	d.optional("selectionMarker", &out.SelectionMarker)
+	d.optional("checkedIndices", &out.CheckedIndices)
+	d.optional("markableCount", &out.MarkableCount)
 	d.optional("timeout", &out.Timeout)
 	if d.err != nil {
 		return d.err
@@ -5931,6 +6001,26 @@ func (v *SelectUiRequest) decodeFrom(raw map[string]json.RawMessage) error {
 func (v SelectUiRequest) MarshalJSON() ([]byte, error) {
 	type plain SelectUiRequest
 	return encodeObject(plain(v), `"type":"extension_ui_request","method":"select"`, nil)
+}
+
+type SelectUiRequestSelectionMarker string
+
+const (
+	SelectUiRequestSelectionMarkerRadio    SelectUiRequestSelectionMarker = "radio"
+	SelectUiRequestSelectionMarkerCheckbox SelectUiRequestSelectionMarker = "checkbox"
+)
+
+func (v *SelectUiRequestSelectionMarker) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "SelectUiRequestSelectionMarker")
+	if err != nil {
+		return err
+	}
+	switch value := SelectUiRequestSelectionMarker(s); value {
+	case SelectUiRequestSelectionMarkerRadio, SelectUiRequestSelectionMarkerCheckbox:
+		*v = value
+		return nil
+	}
+	return unknownValue("SelectUiRequestSelectionMarker", s)
 }
 
 type ConfirmUiRequest struct {
@@ -8666,6 +8756,25 @@ func (v *GetBtwHistoryResult) decodeFrom(raw map[string]json.RawMessage) error {
 	return nil
 }
 
+type AbortCompactionResult struct {
+	Aborted bool `json:"aborted"`
+}
+
+func (v *AbortCompactionResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "AbortCompactionResult", v.decodeFrom)
+}
+
+func (v *AbortCompactionResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out AbortCompactionResult
+	d := fieldDecoder{raw: raw, owner: "AbortCompactionResult"}
+	d.required("aborted", &out.Aborted)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
 // NegotiateProtocolCommand holds the parameters of "negotiate_protocol".
 type NegotiateProtocolCommand struct {
 	ProtocolVersion int64 `json:"protocolVersion"`
@@ -8803,10 +8912,11 @@ func (c Commands) GetState(ctx context.Context) (SessionState, error) {
 
 // SetFastModeCommand holds the parameters of "set_fast_mode".
 type SetFastModeCommand struct {
-	Enabled bool `json:"enabled"`
+	Enabled   bool  `json:"enabled"`
+	Ultrafast *bool `json:"ultrafast,omitempty"`
 }
 
-// SetFastMode sends "set_fast_mode": Enable or disable fast mode for the session.
+// SetFastMode sends "set_fast_mode": Set Fast or, when the model supports it, Ultrafast serving for the session.
 func (c Commands) SetFastMode(ctx context.Context, p SetFastModeCommand) (FastModeResult, error) {
 	var out FastModeResult
 	err := c.call(ctx, "set_fast_mode", p, 0, &out)
@@ -9595,4 +9705,48 @@ func (c Commands) GetBtwHistory(ctx context.Context) ([]BtwHistoryRecord, error)
 	var out GetBtwHistoryResult
 	err := c.call(ctx, "get_btw_history", nil, 0, &out)
 	return out.Records, err
+}
+
+// ComposerPredictionRequest sends "composer_prediction_request": Predict the user's next message for the run that just finished; the alternatives arrive as a `composer_prediction` frame. A no-op when composer.predictions is off or the session is busy.
+func (c Commands) ComposerPredictionRequest(ctx context.Context) error {
+	return c.call(ctx, "composer_prediction_request", nil, 0, nil)
+}
+
+// ComposerPredictionFeedbackCommand holds the parameters of "composer_prediction_feedback".
+type ComposerPredictionFeedbackCommand struct {
+	Action ComposerPredictionFeedbackCommandAction `json:"action"`
+	Rank   *int64                                  `json:"rank,omitempty"`
+}
+
+// ComposerPredictionFeedback sends "composer_prediction_feedback": Report the current composer prediction as shown, inserted (`rank`: the alternative used), or dismissed; dismissing aborts a request still running.
+func (c Commands) ComposerPredictionFeedback(ctx context.Context, p ComposerPredictionFeedbackCommand) error {
+	return c.call(ctx, "composer_prediction_feedback", p, 0, nil)
+}
+
+type ComposerPredictionFeedbackCommandAction string
+
+const (
+	ComposerPredictionFeedbackCommandActionShown     ComposerPredictionFeedbackCommandAction = "shown"
+	ComposerPredictionFeedbackCommandActionAccepted  ComposerPredictionFeedbackCommandAction = "accepted"
+	ComposerPredictionFeedbackCommandActionDismissed ComposerPredictionFeedbackCommandAction = "dismissed"
+)
+
+func (v *ComposerPredictionFeedbackCommandAction) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "ComposerPredictionFeedbackCommandAction")
+	if err != nil {
+		return err
+	}
+	switch value := ComposerPredictionFeedbackCommandAction(s); value {
+	case ComposerPredictionFeedbackCommandActionShown, ComposerPredictionFeedbackCommandActionAccepted, ComposerPredictionFeedbackCommandActionDismissed:
+		*v = value
+		return nil
+	}
+	return unknownValue("ComposerPredictionFeedbackCommandAction", s)
+}
+
+// AbortCompaction sends "abort_compaction": Cancel a running manual compaction, a background handoff included, without stopping the live turn; false when none was running.
+func (c Commands) AbortCompaction(ctx context.Context) (bool, error) {
+	var out AbortCompactionResult
+	err := c.call(ctx, "abort_compaction", nil, 0, &out)
+	return out.Aborted, err
 }

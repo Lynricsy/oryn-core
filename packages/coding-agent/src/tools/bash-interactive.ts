@@ -4,6 +4,7 @@ import type { ImageContent } from "@oh-my-pi/pi-ai";
 import { type PtyRunResult, PtySession } from "@oh-my-pi/pi-natives";
 import { loadXtermTerminal } from "@oh-my-pi/pi-tui/tools/terminal-output";
 import { Settings } from "../config/settings";
+import { buildNonInteractiveEnv } from "../exec/non-interactive-env";
 import { OutputSink, type OutputSummary } from "@oh-my-pi/pi-tui/tools/streaming-output";
 import { TerminalGraphicsDecoder } from "../utils/terminal-graphics";
 import { resolveOutputMaxColumns, resolveOutputSinkArtifactMaxBytes, resolveOutputSinkHeadBytes } from "./output-meta";
@@ -17,41 +18,50 @@ export interface BashInteractiveResult extends OutputSummary {
 }
 
 /**
- * Environment for a PTY a user types into. The native PTY starts from the
- * process's C environ, which Bun's `process.env` writes never reach, so it is
- * handed the spawn env — minus its non-interactive guards (GIT_EDITOR, GPG_TTY,
- * CI; added by procmgr's `buildSpawnEnv`, and a guard added there belongs here
- * too) and NO_COLOR, a monochrome marker — plus a real TERM so editors, pagers,
- * and TUIs behave like a normal terminal. A key left out keeps the inherited
- * launch value; `overrides` win over everything.
+ * The environment of a command with a user at its terminal, from the session
+ * shell's exports. Those carry the guards unattended commands run under
+ * (pagers and editors off, `CI`, `NO_COLOR`, a dumb `TERM`, a pinned locale):
+ * each one still at its guard value is left out, which hands the command the
+ * value omp itself was launched with, and a `TERM` left out that way names the
+ * terminal the command gets. A value the session set itself stays.
  */
 export function interactivePtyEnv(
-	shellEnv: Record<string, string>,
+	exports: Record<string, string>,
 	overrides?: Record<string, string>,
 ): Record<string, string> {
-	const { GIT_EDITOR: _gitEditor, GPG_TTY: _gpgTty, CI: _ci, NO_COLOR: _noColor, ...interactive } = shellEnv;
-	return { ...interactive, TERM: "xterm-256color", ...overrides };
+	const env = { ...exports };
+	const guards = buildNonInteractiveEnv();
+	for (const name in guards) {
+		if (env[name] === guards[name]) delete env[name];
+	}
+	// procmgr's spawn env marks the session's stdin as no terminal.
+	if (env.GPG_TTY === "not a tty") delete env.GPG_TTY;
+	env.TERM ??= "xterm-256color";
+	return { ...env, ...overrides };
 }
 
 /**
- * Run `command` on a PTY the user can type into: the TUI's overlay when the UI
- * renders custom components, otherwise the host's own terminal (the GUI's
- * terminal panel). Callers gate on `canUseInteractiveBashPty`.
+ * Run `application` with `args` on a pseudo-terminal the user drives through
+ * a TUI overlay or the GUI terminal; `command` is what the overlay shows it as.
  */
 export async function runInteractiveBashPty(
 	ui: Pick<NonNullable<AgentToolContext["ui"]>, "custom" | "supportsCustom" | "interactiveTerminal">,
 	options: {
 		command: string;
+		application: string;
+		args: string[];
 		cwd: string;
 		timeoutMs?: number;
 		signal?: AbortSignal;
-		env?: Record<string, string>;
+		/** The session shell's exports the program starts from. */
+		env: Record<string, string>;
 		artifactPath?: string;
 		artifactId?: string;
+		/** Called with the program's pid once the terminal spawned it. */
+		onStart?: (pid: number) => void;
 	},
 ): Promise<BashInteractiveResult> {
 	const settings = await Settings.init();
-	const { shell: resolvedShell, env: shellEnv } = settings.getShellConfig();
 	const graphics = new TerminalGraphicsDecoder();
 	const sink = new OutputSink({
 		artifactPath: options.artifactPath,
@@ -84,9 +94,9 @@ export async function runInteractiveBashPty(
 				{
 					command: options.command,
 					cwd: options.cwd,
-					shell: resolvedShell,
-					// direnv's values win over everything.
-					env: interactivePtyEnv(shellEnv, options.env),
+					shell: options.application,
+					args: options.args,
+					env: interactivePtyEnv(options.env),
 					timeoutMs: options.timeoutMs,
 					signal: options.signal,
 				},
@@ -143,23 +153,25 @@ export async function runInteractiveBashPty(
 					},
 				);
 				void session
-					.start(
+					.startArgv(
 						{
-							command: options.command,
+							application: options.application,
+							args: options.args,
 							cwd: options.cwd,
 							timeoutMs: options.timeoutMs,
-							// direnv's values win over everything.
-							env: interactivePtyEnv(shellEnv, options.env),
+							env: interactivePtyEnv(options.env),
 							signal: options.signal,
 							cols,
 							rows,
-							shell: resolvedShell,
 						},
 						(err, chunk) => {
 							if (finished || err || !chunk) return;
 							component.appendOutput(chunk);
 							record(chunk);
 							tui.requestRender();
+						},
+						(err, pid) => {
+							if (!err) options.onStart?.(pid);
 						},
 					)
 					.then(finalize)

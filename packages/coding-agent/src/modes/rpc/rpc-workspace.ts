@@ -28,8 +28,8 @@ import type { RpcWorkspaceDirectoriesResult } from "./rpc-types";
 /** Refused while streaming: maps to the RPC envelope `code` field (TUI "Cannot … while streaming."). */
 export class RpcWorkspaceBusyError extends Error {
 	readonly code = "busy";
-	constructor(action: string) {
-		super(`Cannot ${action} while streaming.`);
+	constructor(action: string, activity = "streaming") {
+		super(`Cannot ${action} while ${activity}.`);
 	}
 }
 
@@ -123,6 +123,7 @@ export async function applyRpcMoveSession(
 	deps: RpcMoveSessionDeps,
 ): Promise<{ cwd: string }> {
 	if (session.isStreaming) throw new RpcWorkspaceBusyError("move");
+	if (session.isCompacting || session.isBackgroundCompacting) throw new RpcWorkspaceBusyError("move", "compacting");
 	const resolved = normalizeWorkspaceDirectory(directory, session.sessionManager.getCwd());
 	await requireExistingDirectory(resolved);
 	try {

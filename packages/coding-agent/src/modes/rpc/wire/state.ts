@@ -106,6 +106,7 @@ export const stateDefs = {
 		"thinkingLevel?": "ThinkingLevel",
 		isStreaming: absentAs("boolean", false),
 		isCompacting: absentAs("boolean", false),
+		isBackgroundCompacting: absentAs("boolean", false),
 		steeringMode: absentAs("QueueMode", "one-at-a-time"),
 		followUpMode: absentAs("QueueMode", "one-at-a-time"),
 		interruptMode: absentAs("InterruptMode", "immediate"),
@@ -121,6 +122,7 @@ export const stateDefs = {
 			false,
 		),
 		ultrafastEnabled: absentAs(doc("boolean", "`/fast ultra` is on for the active model."), false),
+		fastModeUltrafast: absentAs("boolean", false),
 		slowModeSupported: absentAs(doc("boolean", "`/slow` applies to the active model."), false),
 		slowModeEnabled: absentAs(
 			doc("boolean", "`/slow` is on for the active model; always `false` when `slowModeSupported` is `false`."),
@@ -135,7 +137,10 @@ export const stateDefs = {
 		messageCount: absentAs("number.integer", 0),
 		queuedMessageCount: absentAs("number.integer", 0),
 		hasPendingAsyncWork: absentAs(
-			doc("boolean", "Background jobs or deliveries can still inject a follow-up and wake the session."),
+			doc(
+				"boolean",
+				"Background jobs, their deliveries, child agents or queued peer messages can still wake the session.",
+			),
 			false,
 		),
 		isSettled: absentAs(
@@ -188,9 +193,23 @@ export const stateDefs = {
 			JSON_OBJECT,
 			"The embedded shell's final `ShellTrace` of the run; only when the caller asked for one.",
 		),
+		"fork?": doc(
+			"ShellForkOutcome",
+			"Set when the command overlapped another one on the session's persistent shell and ran in a fork of it.",
+		),
+	},
+	ShellForkOutcome: {
+		carried: doc(
+			"boolean",
+			"What the command set carried back into the session's shell; `false`: it stayed in the fork.",
+		),
+		jobs: doc(
+			"boolean",
+			"It left background jobs running in the fork, where later commands' `jobs`, `wait` and `%N` miss them.",
+		),
 	},
 	LineRange: { first: "number.integer", last: "number.integer" },
-	FastModeResult: { enabled: "boolean", active: "boolean" },
+	FastModeResult: { enabled: "boolean", active: "boolean", "ultrafast?": "boolean" },
 	CompactionResult: {
 		summary: "string",
 		"shortSummary?": "string",

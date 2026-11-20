@@ -100,7 +100,7 @@ import { defaultLoadModeForToolName } from "../../tools/essential-tools";
 import { DEFAULT_TTS_VOICE } from "../../tts/models";
 import { ttsClient } from "../../tts/tts-client";
 import { resolveLocalSpeechModelId } from "../../tts/vocalizer";
-import { decodeWav, encodeWav } from "../../tts/wav";
+import { decodeVoiceWav, encodeWav } from "../../tts/wav";
 import type { EventBus } from "../../utils/event-bus";
 import { calculateTokensPerSecond } from "../../utils/token-rate";
 import {
@@ -115,6 +115,7 @@ import { isRpcHostUriResult, RpcHostUriBridge } from "./host-uris";
 import { applyRpcHookEnabled, applyRpcMcpAction, applyRpcPluginEnabled, applyRpcSkillEnabled } from "./rpc-actions";
 import { applyRpcAbortSubagent, applyRpcReviveSubagent, buildRpcAgentDefinitions } from "./rpc-agents";
 import { RpcBtwController } from "./rpc-btw";
+import { RpcComposerPrediction } from "./rpc-composer-prediction";
 import { isReadOnlyCollabCommand, RpcCollabController } from "./rpc-collab";
 import { RpcHostDictationBridge } from "./rpc-host-dictation";
 import { selectRpcEntries } from "./rpc-compat";
@@ -219,6 +220,7 @@ import {
 	shareRpcSession,
 } from "./rpc-reports";
 import {
+	applyRpcAbortCompaction,
 	applyRpcFresh,
 	applyRpcGetForceTool,
 	applyRpcReloadPlugins,
@@ -621,7 +623,7 @@ export function dispatchRpcControlFrame(parsed: unknown, deps: RpcInputFrameDeps
  * Commands that skip the serial queue entirely; see {@link dispatchRpcInputFrame}.
  * Execution, discovery/import, OAuth, and local speech inference can all be slow;
  * their control frames or an unrelated prompt must remain readable while they
- * run. (`prompt` and `steer_subagent` are also backgrounded there, but start
+ * run. (`prompt`, `steer_subagent`, and `handoff` are also backgrounded there, but start
  * through the serial tail.) `btw_cancel` is synchronous and must overtake a
  * `btw` still starting or a long serial command; `abort_branch_summary`
  * likewise overtakes the `navigate_tree` whose summary it stops.
@@ -700,6 +702,8 @@ const BACKGROUND_COMMANDS: ReadonlySet<string> = new Set<RpcCommand["type"]>([
 	"tui_open",
 	"terminal_snapshot",
 	"abort_branch_summary",
+	// Runs beside a background handoff instead of queueing behind it.
+	"abort_compaction",
 ]);
 
 /**
@@ -744,12 +748,13 @@ function isDetachedSerialCommand(command: RpcCommand): boolean {
  * backgrounded too, so a cold prediction engine never stalls the command queue
  * behind a keystroke. `live_start`, `live_connect` and `dictation_start` respond only once
  * connected or recording, so they are backgrounded and their stop commands can cancel them.
+ * `handoff` leaves the queue free for steering and `abort` while its compaction is preparing.
  * Response correlation is preserved via each command's `id`; ordering across
  * concurrent commands is not guaranteed and clients MUST match on `id`.
  *
  * @returns `undefined` when the frame was routed to a side-channel handler
  *   (extension UI response, host tool/URI frames) or dispatched in the
- *   background (`bash`, `predict_word`, `live_start`, `live_connect`, `dictation_start`, `prompt`, `steer`, `follow_up`, `steer_subagent`). Otherwise a promise that
+ *   background. Otherwise a promise that
  *   resolves once the response for the command has been emitted via `output`.
  *   Errors from `handleCommand` on a command dispatched inline propagate; the
  *   caller is expected to wrap them.
@@ -778,7 +783,8 @@ export function dispatchRpcInputFrame(parsed: unknown, deps: RpcInputFrameDeps):
 		command.type === "steer" ||
 		command.type === "dictation_start" ||
 		command.type === "follow_up" ||
-		command.type === "steer_subagent"
+		command.type === "steer_subagent" ||
+		command.type === "handoff"
 	) {
 		const task = (async () => {
 			try {
@@ -866,7 +872,7 @@ export class RpcUserInputGate {
 	}
 }
 
-/** Starts prompts, steers, follow-ups and `steer_subagent` after earlier ordinary commands, without
+/** Starts prompts, steers, follow-ups, `steer_subagent` and `handoff` after earlier ordinary commands, without
  * awaiting admission. Control frames, `bash` and `predict_word` dispatch immediately (see
  * dispatchRpcInputFrame). `acceptInput` runs synchronously in {@link dispatch}, before the
  * handler is queued, so an abort can invalidate a frame that has not started yet. */
@@ -894,8 +900,8 @@ export class RpcInputDispatcher {
 			const command = parsed as RpcCommand;
 			this.#acceptInput?.(command);
 			// Bash and predict_word retain their immediate side channel. Prompts,
-			// steers, follow-ups and steer_subagent start through the serial tail, but
-			// dispatchRpcInputFrame backgrounds their admission.
+			// steers, follow-ups, steer_subagent and handoff start through the serial tail,
+			// but dispatchRpcInputFrame doesn't await their responses.
 			if (BACKGROUND_COMMANDS.has(command.type)) {
 				dispatchRpcInputFrame(command, this.#deps);
 				return;
@@ -1388,6 +1394,10 @@ export function requestRpcSelect(
 			title,
 			options: labels,
 			...(optionDetails ? { optionDetails } : {}),
+			initialIndex: dialogOptions?.initialIndex,
+			selectionMarker: dialogOptions?.selectionMarker,
+			checkedIndices: dialogOptions?.checkedIndices ? [...dialogOptions.checkedIndices] : undefined,
+			markableCount: dialogOptions?.markableCount,
 			timeout: dialogOptions?.timeout,
 		},
 		response => parseValueDialogResponse(response, dialogOptions),
@@ -1929,6 +1939,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 	const btw = new RpcBtwController(session, output);
 	const composerPredictor = new OrynComposerPredictor(session, output);
 	const orynToolExec = new OrynToolExecutor(session, output);
+	const composerPrediction = new RpcComposerPrediction(session, output);
 	// A continuation abandoned while waiting leaves nothing to end the activity stretch: re-check settlement.
 	const goalController = new RpcGoalController(session, () => void settleWatcher.check());
 	// A scheduled or held goal turn will start a turn: every settle report treats it as busy,
@@ -2913,7 +2924,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				}
 				// A manual compaction or handoff no longer holds the queue; branching under it would
 				// land its write in the new session file.
-				if (command.type === "branch" && (session.isCompacting || session.isGeneratingHandoff)) {
+				if (command.type === "branch" && (session.isCompacting || session.isBackgroundCompacting)) {
 					return error(id, "branch", new SessionBusyError("branch the session").message, "session_busy");
 				}
 				const requestedModel =
@@ -2941,7 +2952,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					inputGate.commitSessionChange(command);
 					// `branch` leaves a live run streaming to its normal yield; new/switch detach it.
 					if (command.type !== "branch" && command.type !== "fork") promptResults.abortOpen();
-					// The detached run publishes no terminal agent_end to settle on.
+					// The detached run publishes no agent_end to settle on.
 					void settleWatcher.check();
 					await emitAvailableCommandsUpdate();
 					emitSessionInfoUpdate();
@@ -3059,6 +3070,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					availableThinkingLevels: [...session.getAvailableThinkingLevels()],
 					isStreaming: session.isStreaming,
 					isCompacting: session.isCompacting,
+					isBackgroundCompacting: session.isBackgroundCompacting,
 					steeringMode: session.steeringMode,
 					followUpMode: session.followUpMode,
 					interruptMode: session.interruptMode,
@@ -3069,7 +3081,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					autoCompactionEnabled: session.autoCompactionEnabled,
 					autoRetryEnabled: session.autoRetryEnabled,
 					queuedMessageCount: session.queuedMessageCount,
-					hasPendingAsyncWork: session.hasPendingAsyncWork(),
+					hasPendingAsyncWork: session.wakeSources !== undefined,
 					// A scheduled goal continuation will start a turn: not settled.
 					isSettled: isSessionSettled(session, goalTurnScheduled),
 					queuedMessages: {
@@ -3084,6 +3096,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					fastModeSupported: session.isFastModeSupported(),
 					ultrafastSupported: session.isUltrafastModeSupported(),
 					ultrafastEnabled: session.isUltrafastModeEnabled(),
+					fastModeUltrafast: session.isUltrafastModeEnabled(),
 					slowModeSupported: session.isSlowModeSupported(),
 					slowModeEnabled: session.isSlowModeEnabled(),
 					slowModeScope: session.getSlowModeScope(),
@@ -3108,13 +3121,27 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 			}
 
 			case "set_fast_mode": {
-				const supported = session.setFastMode(command.enabled);
+				if (
+					typeof command.enabled !== "boolean" ||
+					(command.ultrafast !== undefined && typeof command.ultrafast !== "boolean") ||
+					(command.ultrafast && !command.enabled)
+				) {
+					return error(id, "set_fast_mode", "Ultrafast requires an enabled fast mode.");
+				}
+				const supported = command.ultrafast ? session.setUltrafastMode(true) : session.setFastMode(command.enabled);
 				if (command.enabled && !supported) {
-					return error(id, "set_fast_mode", "Fast mode is unavailable for the current model.");
+					return error(
+						id,
+						"set_fast_mode",
+						command.ultrafast
+							? "Ultrafast is unavailable for the current model."
+							: "Fast mode is unavailable for the current model.",
+					);
 				}
 				return success(id, "set_fast_mode", {
 					enabled: session.isFastModeEnabled(),
 					active: session.isFastModeActive(),
+					ultrafast: session.isUltrafastModeEnabled(),
 				});
 			}
 
@@ -4271,7 +4298,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				// GUI mic dictation: the host ships a canonical 16 kHz mono PCM16
 				// WAV buffer (the STT pipeline's native rate — see the wire type).
 				try {
-					const { samples, sampleRate } = decodeWav(Buffer.from(command.audioBase64, "base64"));
+					const { samples, sampleRate } = decodeVoiceWav(Buffer.from(command.audioBase64, "base64"));
 					if (sampleRate !== 16_000) {
 						return error(
 							id,
@@ -4422,14 +4449,8 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 			}
 
 			case "handoff": {
-				// Resetting the agent mid-stream lets the live turn keep emitting into a
-				// session that handoff has already torn down. Refuse while a prompt is in
-				// flight (mirrors the TUI /handoff guard).
-				if (session.isStreaming) {
-					return error(id, "handoff", "Cannot hand off while a response is in progress");
-				}
-				const result = await session.handoff(command.customInstructions);
-				return success(id, "handoff", result ? { savedPath: result.savedPath } : null);
+				await session.compact(command.customInstructions, { mode: "handoff" });
+				return success(id, "handoff", {});
 			}
 
 			// =================================================================
@@ -4544,10 +4565,12 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				// Closes the authorization-URL dialogs the host has not answered once the login ends.
 				const loginDone = new AbortController();
 				let authUrlId: string | undefined;
+				let authEmitted = false;
 				try {
 					await session.modelRegistry.authStorage.oauth.login(command.providerId, {
 						signal: cancel.signal,
 						onAuth: info => {
+							authEmitted = true;
 							authUrlId = requestRpcOpenUrl(pendingExtensionRequests, output, info, {
 								signal: loginDone.signal,
 								onDismiss: reason => cancel.abort(reason ?? new LoginCancelledError()),
@@ -4603,8 +4626,8 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 										"which is not supported in RPC mode. Use the terminal UI to log in.",
 								);
 							}
-							// Once its URL is up, only this answer moves the login on. Naming the
-							// URL lets a host show both together, not one behind the other.
+							// RPC hosts can render pre-auth prompts and associate post-auth
+							// prompts with the URL that awaits the user's response.
 							const value = await requestRpcInput(
 								pendingExtensionRequests,
 								output,
@@ -4612,7 +4635,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 								prompt.placeholder,
 								dialogOptions,
 								{
-									...(authUrlId ? { loginPromptFor: authUrlId } : {}),
+									...(authEmitted && authUrlId ? { loginPromptFor: authUrlId } : {}),
 									...(prompt.allowEmpty ? { allowEmpty: true } : {}),
 								},
 							);
@@ -4725,6 +4748,26 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 			case "get_btw_history":
 				return success(id, "get_btw_history", { records: await btw.history() });
 
+			case "composer_prediction_request":
+				composerPrediction.request();
+				return success(id, "composer_prediction_request");
+
+			case "composer_prediction_feedback": {
+				const { action, rank } = command;
+				if (action !== "shown" && action !== "accepted" && action !== "dismissed") {
+					return error(id, "composer_prediction_feedback", 'action must be "shown", "accepted" or "dismissed"');
+				}
+				if (rank !== undefined && !(Number.isInteger(rank) && rank >= 0)) {
+					return error(id, "composer_prediction_feedback", "rank must be a non-negative integer");
+				}
+				composerPrediction.feedback(action, rank);
+				return success(id, "composer_prediction_feedback");
+			}
+
+			case "abort_compaction":
+				// Only compaction stops here; a live turn beside a background handoff keeps streaming.
+				return success(id, "abort_compaction", { aborted: applyRpcAbortCompaction(session) });
+
 			// =================================================================
 			// Extension Features (usage / settings / providers)
 			// =================================================================
@@ -4765,8 +4808,11 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				const setting = lookupSetting(command.path);
 				if (!setting) return error(id, "set_setting", `Unknown setting path: ${command.path}`);
 				try {
-					validateRpcSettingValue(command.path, command.value);
-					setting.set(session.settings, command.value as never);
+					if (command.value === undefined) setting.unset(session.settings);
+					else {
+						validateRpcSettingValue(command.path, command.value);
+						setting.set(session.settings, command.value as never);
+					}
 					await session.settings.flush();
 					const effectiveValue = setting.get(session.settings);
 					const advisorEnabled = command.path === "advisor.enabled" ? session.isAdvisorEnabled() : undefined;
@@ -5589,6 +5635,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 	// A backgrounded builtin (e.g. a /mcp reauth browser wait) must not park
 	// the drain: tear it down now that the client is gone.
 	abortBuiltinCommands("RPC client disconnected");
+	if (session.isBackgroundCompacting) session.abortCompaction("RPC client disconnected");
 	await shutdownCoordinator.drain();
 	subagentRegistry?.dispose();
 	await Promise.all([liveBridge.stop(), collabController.dispose()]);

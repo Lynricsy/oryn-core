@@ -52,6 +52,11 @@ export class RpcPlanApprovalController {
 	readonly #deps: RpcPlanApprovalControllerDeps;
 	#pending: RpcPendingPlanProposal | undefined;
 	#handler: PlanProposalHandler | undefined;
+	/**
+	 * What the session stores for {@link #handler}: it wraps an installed handler, so
+	 * ownership is decided against the stored wrapper, never the function passed in.
+	 */
+	#installed: PlanProposalHandler | undefined;
 
 	constructor(deps: RpcPlanApprovalControllerDeps) {
 		this.#deps = deps;
@@ -63,7 +68,7 @@ export class RpcPlanApprovalController {
 
 	/** True when this controller's proposal handler is the installed one. */
 	get armed(): boolean {
-		return this.#handler !== undefined && this.#deps.session.peekPlanProposalHandler() === this.#handler;
+		return this.#installed !== undefined && this.#deps.session.peekPlanProposalHandler() === this.#installed;
 	}
 
 	/**
@@ -80,8 +85,9 @@ export class RpcPlanApprovalController {
 
 	#arm(): void {
 		if (this.#handler) return;
-		const existing = this.#deps.session.peekPlanProposalHandler();
-		if (existing) return;
+		// A foreign handler (prewalk's plan-yolo) keeps its place; the session's review
+		// fallback is not a handler anyone installed.
+		if (this.#deps.session.hasPlanProposalHandler()) return;
 		const session = this.#deps.session;
 		this.#handler = async title => {
 			// Print-mode's handler, verbatim: validate + shape the proposal, promote
@@ -99,14 +105,16 @@ export class RpcPlanApprovalController {
 			return result;
 		};
 		session.setPlanProposalHandler(this.#handler);
+		this.#installed = session.peekPlanProposalHandler();
 	}
 
 	#disarm(): void {
 		if (!this.#handler) return;
-		if (this.#deps.session.peekPlanProposalHandler() === this.#handler) {
+		if (this.#deps.session.peekPlanProposalHandler() === this.#installed) {
 			this.#deps.session.setPlanProposalHandler(null);
 		}
 		this.#handler = undefined;
+		this.#installed = undefined;
 		this.#pending = undefined;
 	}
 

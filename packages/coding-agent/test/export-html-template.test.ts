@@ -15,6 +15,8 @@ const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "omp-html-template-"));
 const unrelatedCwd = path.join(tempRoot, "unrelated-cwd");
 const bundleDir = path.join(tempRoot, "bundle");
 const compiledPath = path.join(tempRoot, "compiled-template-probe");
+const embeddedPath = path.join(tempRoot, "embedded-template-probe");
+const embeddedViewer = 'document.body.dataset.viewer = "</script><p>viewer text</p>";';
 let bundlePath: string;
 const dependencyStubs: Record<string, string> = {
 	"@oh-my-pi/omp-stats/trace":
@@ -71,6 +73,17 @@ beforeAll(async () => {
 		compile: { outfile: compiledPath },
 	});
 	if (!compiled.success) throw new AggregateError(compiled.logs, "Compiled template probe failed");
+	const embedded = await Bun.build({
+		entrypoints: [probePath],
+		target: "bun",
+		plugins: [focusedBundlePlugin],
+		define: {
+			"process.env.PI_BUNDLED": '"true"',
+			"process.env.PI_EXPORT_VIEWER_EMBED": JSON.stringify(embeddedViewer),
+		},
+		compile: { outfile: embeddedPath },
+	});
+	if (!embedded.success) throw new AggregateError(embedded.logs, "Embedded template probe failed");
 }, 120_000);
 
 afterAll(async () => {
@@ -153,6 +166,24 @@ describe("HTML export template", () => {
 		const expected = await runProbe([process.execPath, bundlePath]);
 		expect(await runProbe([compiledPath])).toBe(expected);
 		expect(await fs.readdir(bundleDir)).toEqual([path.basename(bundlePath)]);
+	});
+
+	test("a compiled distribution can embed its viewer without a hosted release or closing the script tag", async () => {
+		const html = await runProbe([embeddedPath]);
+		const { document } = parseHTML(html);
+		const external = document.querySelectorAll("script[src]");
+		expect(external).toHaveLength(2);
+		expect([...external].map(script => new URL(script.getAttribute("src")!).hostname)).toEqual([
+			"stencil.so",
+			"stencil.so",
+		]);
+		const inline = [...document.querySelectorAll("script:not([src])")].find(script =>
+			script.textContent?.includes("document.body.dataset.viewer"),
+		);
+		expect(inline?.textContent).toBe(
+			`window.addEventListener("DOMContentLoaded",function(){\n${embeddedViewer.replaceAll("</script", "<\\/script")}\n});`,
+		);
+		expect([...document.querySelectorAll("p")].some(element => element.textContent === "viewer text")).toBe(false);
 	});
 
 	test("npm packages keep the tiny loader and metadata but omit hosted viewer source assets", async () => {

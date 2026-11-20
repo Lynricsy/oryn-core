@@ -65,12 +65,12 @@ import type {
 	AsyncJobInspection,
 	AsyncJobSnapshot,
 	AsyncJobTree,
+	DequeuedMessage,
 	EphemeralTurnOptions,
 	EphemeralTurnResult,
 	Prewalk,
 	PromptOptions,
 	ResolvedRoleModel,
-	RestoredQueuedMessage,
 	RoleModelCycle,
 	RoleModelCycleResult,
 	SessionStats,
@@ -88,7 +88,7 @@ import {
 import { BlobStore, type BlobPutOptions, type BlobPutResult, lazyImageDataSync } from "../session/blob-store";
 import type { IdleMaintenanceOptions } from "../session/idle-maintenance";
 import type { CustomMessage } from "../session/messages";
-import { resolveRoleModelCycle, roleThinkingLevelForModel, serviceTierForModel } from "../session/model-controls";
+import { resolveRoleModelCycle, serviceTierForModel } from "../session/model-controls";
 import type { ServingModel } from "../session/retry-fallback-chains";
 import {
 	buildSessionContext,
@@ -127,6 +127,7 @@ export function emptyMirrorState(): SessionMirrorState {
 		isStreaming: false,
 		runStartedAt: undefined,
 		ircWakesPending: false,
+		hasPendingWake: false,
 		ircQueuedFrom: [],
 		isPaused: false,
 		streamMessage: null,
@@ -175,7 +176,6 @@ function emptyViewState(): SessionViewState {
 	return {
 		providerSessionId: "",
 		sessionName: undefined,
-		seanceSourceArtifactsDir: null,
 		leafId: null,
 		agentEffort: undefined,
 		tools: [],
@@ -192,7 +192,6 @@ function emptyViewState(): SessionViewState {
 		compactionSpeculation: "idle",
 		contextUsageRevision: 0,
 		contextUsage: undefined,
-		isGeneratingHandoff: false,
 		isRetrying: false,
 		retryAttempt: 0,
 		isTtsrAbortPending: false,
@@ -342,7 +341,6 @@ export class RemoteAgentSession implements AgentViewSession {
 			getBranch: fromId => this.#entryIndex.pathTo(fromId),
 			getLeafId: () => this.#entryIndex.leafId(),
 			getConversationTip: () => conversationTip(this.#entries, this.#entryIndex.branchView()),
-			getSeanceSourceArtifactsDir: () => this.#view.seanceSourceArtifactsDir,
 			appendCustomEntry: (customType, data) => this.#appendCustomEntry(customType, data),
 			flush: () => this.#command("flushSession"),
 			ensureOnDisk: () => this.#command("ensureOnDisk"),
@@ -350,7 +348,6 @@ export class RemoteAgentSession implements AgentViewSession {
 			putBlob: (data: Buffer, options?: BlobPutOptions): Promise<BlobPutResult> => blobs().put(data, options),
 			putBlobSync: (data: Buffer, options?: BlobPutOptions): BlobPutResult => blobs().putSync(data, options),
 			getArtifactPath: id => this.#command("getArtifactPath", id),
-			getArtifactContent: id => this.#command("getArtifactContent", id),
 		};
 	}
 
@@ -383,6 +380,10 @@ export class RemoteAgentSession implements AgentViewSession {
 
 	get ircWakesPending(): boolean {
 		return this.#state.ircWakesPending;
+	}
+
+	get hasPendingWake(): boolean {
+		return this.#state.hasPendingWake;
 	}
 
 	get messages(): AgentMessage[] {
@@ -471,10 +472,6 @@ export class RemoteAgentSession implements AgentViewSession {
 
 	get contextUsageRevision(): number {
 		return this.#view.contextUsageRevision;
-	}
-
-	get isGeneratingHandoff(): boolean {
-		return this.#view.isGeneratingHandoff;
 	}
 
 	get isRetrying(): boolean {
@@ -579,10 +576,6 @@ export class RemoteAgentSession implements AgentViewSession {
 		if (!next) return undefined;
 		this.setThinkingLevel(next);
 		return next;
-	}
-
-	resolveTemporaryModelThinkingLevel(model: Model): ConfiguredThinkingLevel | undefined {
-		return roleThinkingLevelForModel(this.settings, this.modelRegistry.getAvailable(), model);
 	}
 
 	setModelTemporary(
@@ -710,14 +703,16 @@ export class RemoteAgentSession implements AgentViewSession {
 	 * delivering any restorable entry, so a message restored here is never
 	 * delivered too.
 	 */
-	popLastQueuedMessage(): RestoredQueuedMessage | undefined {
+	popLastQueuedMessage(): DequeuedMessage | undefined {
 		const queue = this.#view.restorableQueue;
 		const chips = this.#view.queuedMessages;
 		const steering = this.#lastRestorable(queue.steering);
 		const followUp = steering < 0 ? this.#lastRestorable(queue.followUp) : -1;
 		let popped: SessionQueuedEntry;
+		let from: DequeuedMessage["queue"];
 		if (steering >= 0) {
 			popped = queue.steering[steering];
+			from = "steering";
 			// Chips list live-steered messages ahead of the queue: restorable entries align with their tail.
 			const chip = chips.steering.length - (queue.steering.length - steering);
 			this.#view = {
@@ -727,6 +722,7 @@ export class RemoteAgentSession implements AgentViewSession {
 			};
 		} else if (followUp >= 0) {
 			popped = queue.followUp[followUp];
+			from = "followUp";
 			const chip = chips.followUp.length - (queue.followUp.length - followUp);
 			this.#view = {
 				...this.#view,
@@ -737,7 +733,7 @@ export class RemoteAgentSession implements AgentViewSession {
 			return undefined;
 		}
 		this.#withdraw(popped.id);
-		return popped.message;
+		return { ...popped.message, queue: from };
 	}
 
 	/**
@@ -768,10 +764,6 @@ export class RemoteAgentSession implements AgentViewSession {
 
 	abortCompaction(reason?: unknown): void {
 		this.#notify("abortCompaction", toWireData(reason));
-	}
-
-	abortHandoff(): void {
-		this.#notify("abortHandoff");
 	}
 
 	runEphemeralTurn(args: EphemeralTurnOptions): Promise<EphemeralTurnResult> {
@@ -913,6 +905,7 @@ export class RemoteAgentSession implements AgentViewSession {
 	applyEvent(event: AgentSessionEvent): void {
 		if (this.#closed !== undefined) return;
 		this.#trackEvent(event);
+		// oxlint-disable-next-line unicorn/no-useless-spread -- snapshot: the loop body may add or remove listeners
 		for (const listener of [...this.#listeners]) {
 			try {
 				listener(event);
@@ -928,6 +921,7 @@ export class RemoteAgentSession implements AgentViewSession {
 	/** Bridge only: report a run-state transition to run-state subscribers. */
 	applyRunState(state: SessionRunState): void {
 		if (this.#closed !== undefined) return;
+		// oxlint-disable-next-line unicorn/no-useless-spread -- snapshot: the loop body may add or remove listeners
 		for (const listener of [...this.#runStateListeners]) {
 			try {
 				listener(state);
@@ -948,7 +942,13 @@ export class RemoteAgentSession implements AgentViewSession {
 	close(reason: string): void {
 		if (this.#closed !== undefined) return;
 		const wasRunning = this.#state.runStartedAt !== undefined;
-		this.#state = { ...this.#state, isStreaming: false, runStartedAt: undefined, streamMessage: null };
+		this.#state = {
+			...this.#state,
+			isStreaming: false,
+			runStartedAt: undefined,
+			hasPendingWake: false,
+			streamMessage: null,
+		};
 		if (wasRunning) this.applyRunState("idle");
 		this.#closed = reason;
 		this.#settledQueued.clear();

@@ -28,6 +28,7 @@ import { clearPluginRootsAndCaches, resolveActiveProjectRegistryPath } from "../
 import { loadSlashCommands } from "../../extensibility/slash-commands";
 import { MCPManager } from "../../mcp";
 import type { AgentSession } from "../../session/agent-session";
+import { USER_INTERRUPT_LABEL } from "../../session/messages";
 import { formatShakeSummary, type ShakeMode } from "../../session/shake-types";
 import { buildAvailableSlashCommands } from "../../slash-commands/available-commands";
 import { buildRpcPluginsResult } from "./rpc-domains";
@@ -75,6 +76,20 @@ export function applyRpcSetPrewalk(session: AgentSession, enabled: boolean): Rpc
 export function applyRpcFresh(session: AgentSession): RpcFreshResult | undefined {
 	if (!session.freshSession()) return undefined;
 	return {};
+}
+
+/**
+ * Cancel a running compaction without touching the live turn (`abort_compaction`).
+ * A background handoff is not `isCompacting` (that flag is a blocking compaction),
+ * so both are consulted. Returns whether one was running.
+ */
+export function applyRpcAbortCompaction(
+	session: Pick<AgentSession, "isCompacting" | "isBackgroundCompacting" | "abortCompaction">,
+): boolean {
+	const running = session.isCompacting || session.isBackgroundCompacting;
+	// The user stopped it: reported like an Esc, not as a failure.
+	if (running) session.abortCompaction(USER_INTERRUPT_LABEL);
+	return running;
 }
 
 /** Drop heavy content from context (/shake elide|images). */
