@@ -7,7 +7,8 @@
  * `partialResult.details.orynPseudo`，Oryn Web 的 bash 卡片边跑边显示。
  *
  * 轨迹快照已由 bash 执行器绑到活的 `RunTrace` 上（`attachShellTrace`），渲染直接读原生状态，不重新解析。
- * 同一快照只渲染一次（只有输出变了的帧会重复带同一快照）；每个调用每 250 毫秒至多渲染一次，窗口内的帧沿用上一份。
+ * 同一快照只渲染一次（只有输出变了的帧会重复带同一快照）。不另做时间节流：执行器只在轨迹变化时发帧、
+ * 且至多每 80 毫秒一次，若沿用旧结果，紧接着的一条无输出长命令会在整段运行里都显示成上一条。
  * 只改转发出去的帧，不碰会话里的事件对象（TUI、扩展与持久化看到的仍是原样）。
  *
  * 最终结果的 Pseudo 由 Oryn 的 orb 扩展在 `tool_result` 里写入（Runner 用的是用户自己的 omp，只能靠扩展），
@@ -22,8 +23,6 @@ import {
 import { isShellTrace, type ShellTrace, type ShellVizPresentation } from "@oh-my-pi/pi-wire";
 import type { AgentSessionEvent } from "../../session/agent-session";
 
-/** 同一调用两次渲染之间的最短间隔。 */
-export const ORYN_PSEUDO_INTERVAL_MS = 250;
 /** 超出的行只计数，不发送。 */
 export const ORYN_PSEUDO_MAX_ROWS = 400;
 
@@ -110,37 +109,19 @@ export function compactOrynPseudo(presentation: ShellVizPresentation): OrynPseud
 export class OrynShellPseudoProjector {
 	/** 每个快照的渲染结果；`null` 表示原生拒绝了这份快照，不再重试。 */
 	readonly #byTrace = new WeakMap<ShellTrace, OrynPseudo | null>();
-	/** 每个在途调用最近一次渲染的时间与结果。 */
-	readonly #last = new Map<string, { at: number; pseudo: OrynPseudo | undefined }>();
-	readonly #now: () => number;
-
-	constructor(now: () => number = () => performance.now()) {
-		this.#now = now;
-	}
 
 	project(event: AgentSessionEvent): AgentSessionEvent {
-		if (event.type === "tool_execution_end") {
-			this.#last.delete(event.toolCallId);
-			return event;
-		}
-		if (event.type === "agent_end") {
-			this.#last.clear();
-			return event;
-		}
 		if (event.type !== "tool_execution_update" || event.toolName !== "bash") return event;
 		const partial: unknown = event.partialResult;
 		if (!isRecord(partial) || !isRecord(partial.details) || !isShellTrace(partial.details.trace)) return event;
-		const pseudo = this.#pseudoFor(event.toolCallId, partial.details.trace);
+		const pseudo = this.#pseudoFor(partial.details.trace);
 		if (!pseudo) return event;
 		return { ...event, partialResult: { ...partial, details: { ...partial.details, orynPseudo: pseudo } } };
 	}
 
-	#pseudoFor(toolCallId: string, trace: ShellTrace): OrynPseudo | undefined {
+	#pseudoFor(trace: ShellTrace): OrynPseudo | undefined {
 		const cached = this.#byTrace.get(trace);
 		if (cached !== undefined) return cached ?? undefined;
-		const now = this.#now();
-		const last = this.#last.get(toolCallId);
-		if (last && now - last.at < ORYN_PSEUDO_INTERVAL_MS) return last.pseudo;
 		let pseudo: OrynPseudo | undefined;
 		try {
 			const source = shellVisualization(trace);
@@ -151,7 +132,6 @@ export class OrynShellPseudoProjector {
 			});
 		}
 		this.#byTrace.set(trace, pseudo ?? null);
-		this.#last.set(toolCallId, { at: now, pseudo });
 		return pseudo;
 	}
 }

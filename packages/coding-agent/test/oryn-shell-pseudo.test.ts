@@ -6,7 +6,7 @@ import { describe, expect, it } from "bun:test";
 import { RunTrace, Shell } from "@oh-my-pi/pi-natives";
 import { attachShellTrace } from "@oh-my-pi/pi-tui/tools/shell-viz";
 import { isShellTrace, type ShellTrace } from "@oh-my-pi/pi-wire";
-import { ORYN_PSEUDO_INTERVAL_MS, type OrynPseudo, OrynShellPseudoProjector } from "../src/modes/rpc/oryn-shell-pseudo";
+import { type OrynPseudo, OrynShellPseudoProjector } from "../src/modes/rpc/oryn-shell-pseudo";
 import type { AgentSessionEvent } from "../src/session/agent-session";
 
 function snapshot(trace: RunTrace): ShellTrace {
@@ -29,10 +29,6 @@ function update(trace: ShellTrace, toolCallId = "call-1", toolName = "bash"): Ag
 function pseudoOf(event: AgentSessionEvent): OrynPseudo | undefined {
 	if (event.type !== "tool_execution_update") return undefined;
 	return event.partialResult?.details?.orynPseudo;
-}
-
-function text(pseudo: OrynPseudo | undefined): string {
-	return (pseudo?.rows ?? []).map(row => row.segments.map(s => s.text).join("")).join("\n");
 }
 
 describe("OrynShellPseudoProjector", () => {
@@ -72,18 +68,31 @@ describe("OrynShellPseudoProjector", () => {
 		expect(pseudoOf(event)).toBeUndefined();
 	});
 
-	it("同一调用 250 毫秒内的新快照沿用上一份，过了间隔才重新渲染", async () => {
-		let now = 0;
-		const projector = new OrynShellPseudoProjector(() => now);
-		const first = new RunTrace("echo one");
-		await new Shell().run({ command: "echo one", trace: first });
-		const second = new RunTrace("echo two");
-		await new Shell().run({ command: "echo two", trace: second });
-		const a = pseudoOf(projector.project(update(snapshot(first))));
-		now += ORYN_PSEUDO_INTERVAL_MS - 1;
-		expect(pseudoOf(projector.project(update(snapshot(second))))).toBe(a);
-		now += 1;
-		expect(text(pseudoOf(projector.project(update(snapshot(second)))))).toContain("two");
+	it("紧接着的下一条无输出命令立刻标成正在执行，不沿用上一份（执行器只在轨迹变化时发帧）", async () => {
+		const command = "sleep 0.12\nsleep 0.6";
+		const trace = new RunTrace(command);
+		let done = false;
+		const run = new Shell().run({ command, trace }).finally(() => {
+			done = true;
+		});
+		const projector = new OrynShellPseudoProjector();
+		const activeText = (p: OrynPseudo | undefined) =>
+			p?.rows
+				.find(row => row.active)
+				?.segments.map(s => s.text)
+				.join("") ?? "";
+		// 像执行器一样只在轨迹版本变化时投一帧；子进程推进只能按条件轮询
+		let seen = -1;
+		let current = "";
+		while (!done && !current.includes("0.6")) {
+			if (trace.version() !== seen) {
+				seen = trace.version();
+				current = activeText(pseudoOf(projector.project(update(snapshot(trace)))));
+			}
+			await Bun.sleep(5);
+		}
+		await run;
+		expect(current).toContain("sleep 0.6");
 	});
 
 	it("非 bash 工具与不带轨迹的帧原样转发", () => {
