@@ -1734,11 +1734,12 @@ class FormSection:
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class FormUiRequest:
-    """The whole form of one `ask` tool call; sent only after `set_ask_dialog` enables it with `form: true`."""
+    """Exactly one representation: HTML by default, or parsed sections when the host enables structured forms with set_ask_dialog."""
     type: Literal["extension_ui_request"] = "extension_ui_request"
     id: str
     method: Literal["form"] = "form"
-    sections: tuple[FormSection, ...]
+    html: str | None = None
+    sections: tuple[FormSection, ...] | None = None
     timeout: int | None = None
 
 
@@ -1836,6 +1837,7 @@ class ExtensionUiRequest(ExtensionUiRequestMixin):
     prefill: str | None = None
     prompt_style: bool | None = None
     questions: tuple[AskQuestion, ...] | None = None
+    html: str | None = None
     sections: tuple[FormSection, ...] | None = None
     target_id: str | None = None
     notify_type: NotifyType | None = None
@@ -3428,7 +3430,8 @@ def parse_form_ui_request(value: object, path: str = "FormUiRequest") -> FormUiR
     required(payload, "method", cast('Decoder[Literal["form"]]', literal(frozenset({"form"}))), path)
     return FormUiRequest(
         id=required(payload, "id", decode_str, path),
-        sections=required(payload, "sections", array(parse_form_section), path),
+        html=optional(payload, "html", decode_str, path),
+        sections=optional(payload, "sections", array(parse_form_section), path),
         timeout=optional(payload, "timeout", decode_int, path),
     )
 
@@ -3532,6 +3535,7 @@ def parse_extension_ui_request(value: object, path: str = "ExtensionUiRequest") 
         prefill=optional(payload, "prefill", decode_str, path),
         prompt_style=optional(payload, "promptStyle", decode_bool, path),
         questions=optional(payload, "questions", array(parse_ask_question), path),
+        html=optional(payload, "html", decode_str, path),
         sections=optional(payload, "sections", array(parse_form_section), path),
         target_id=optional(payload, "targetId", decode_str, path),
         notify_type=optional(payload, "notifyType", _decode_notify_type, path),

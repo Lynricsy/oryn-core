@@ -1499,12 +1499,13 @@ export interface FormSection {
 	blocks: FormBlock[];
 }
 
-/** The whole form of one `ask` tool call; sent only after `set_ask_dialog` enables it with `form: true`. */
+/** Exactly one representation: HTML by default, or parsed sections when the host enables structured forms with set_ask_dialog. */
 export interface FormUiRequest {
 	type: "extension_ui_request";
 	id: string;
 	method: "form";
-	sections: FormSection[];
+	html?: string;
+	sections?: FormSection[];
 	timeout?: number;
 }
 
@@ -1589,7 +1590,7 @@ export interface ConfirmUiResponse {
 	confirmed: boolean;
 }
 
-/** Dismisses a dialog; `timedOut` reports the host's own deadline (an `ask` dialog then takes its recommended answers). */
+/** Dismisses a dialog; `timedOut` reports the host's own deadline (an `ask` dialog then takes its recommended answers, a `form` its defaults). */
 export interface CancelUiResponse {
 	type: "extension_ui_response";
 	id: string;
@@ -1611,8 +1612,16 @@ export interface FormUiResponse {
 	formData: Record<string, unknown>;
 }
 
+/** Answers a `form` request with the submitted form data. */
+export interface DataUiResponse {
+	type: "extension_ui_response";
+	id: string;
+	/** Submitted values by control `name`: a string, a number, or a string array. */
+	data: Record<string, unknown>;
+}
+
 /** Host reply to an extension UI request; variants share `type` and differ by their payload key. */
-export type ExtensionUiResponse = ValueUiResponse | ConfirmUiResponse | CancelUiResponse | AnswersUiResponse | FormUiResponse;
+export type ExtensionUiResponse = ValueUiResponse | ConfirmUiResponse | CancelUiResponse | AnswersUiResponse | DataUiResponse | FormUiResponse;
 
 export interface HostToolCallRequest {
 	type: "host_tool_call";

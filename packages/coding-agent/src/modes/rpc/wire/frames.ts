@@ -262,8 +262,8 @@ export const frameDefs = {
 		"One titled part of a form. Pictures arrive as their alt text.",
 	),
 	FormUiRequest: doc(
-		{ type: UI, id: "string", method: "'form'", sections: "FormSection[]", "timeout?": "number.integer" },
-		"The whole form of one `ask` tool call; sent only after `set_ask_dialog` enables it with `form: true`.",
+		{ type: UI, id: "string", method: "'form'", "html?": "string", "sections?": "FormSection[]", "timeout?": "number.integer" },
+		"Exactly one representation: HTML by default, or parsed sections when the host enables structured forms with set_ask_dialog.",
 	),
 	CancelUiRequest: doc(
 		{ type: UI, id: "string", method: "'cancel'", targetId: "string" },
@@ -319,7 +319,7 @@ export const frameDefs = {
 	),
 	CancelUiResponse: doc(
 		{ type: "'extension_ui_response'", id: "string", cancelled: "true", "timedOut?": "boolean" },
-		"Dismisses a dialog; `timedOut` reports the host's own deadline (an `ask` dialog then takes its recommended answers).",
+		"Dismisses a dialog; `timedOut` reports the host's own deadline (an `ask` dialog then takes its recommended answers, a `form` its defaults).",
 	),
 	AnswersUiResponse: doc(
 		{ type: "'extension_ui_response'", id: "string", answers: "AskAnswer[]" },
@@ -329,8 +329,16 @@ export const frameDefs = {
 		{ type: "'extension_ui_response'", id: "string", formData: JSON_OBJECT },
 		"Answers a `form` request, by control `name`: a string, or a string array for a multi-choice field. Choice values are option `value`s, or free text where `other` is set.",
 	),
+	DataUiResponse: doc(
+		{
+			type: "'extension_ui_response'",
+			id: "string",
+			data: doc(JSON_OBJECT, "Submitted values by control `name`: a string, a number, or a string array."),
+		},
+		"Answers a `form` request with the submitted form data.",
+	),
 	ExtensionUiResponse: doc(
-		"ValueUiResponse | ConfirmUiResponse | CancelUiResponse | AnswersUiResponse | FormUiResponse",
+		"ValueUiResponse | ConfirmUiResponse | CancelUiResponse | AnswersUiResponse | DataUiResponse | FormUiResponse",
 		"Host reply to an extension UI request; variants share `type` and differ by their payload key.",
 	),
 

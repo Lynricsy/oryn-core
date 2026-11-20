@@ -687,6 +687,8 @@ function toAggregatedStats(row: AggregateRow | undefined): AggregatedStats {
 	const failedRequests = row?.failed ?? 0;
 	const totalInputTokens = row?.input_tokens ?? 0;
 	const totalCacheReadTokens = row?.cache_read_tokens ?? 0;
+	const totalCacheWriteTokens = row?.cache_write_tokens ?? 0;
+	const promptTokens = totalInputTokens + totalCacheReadTokens + totalCacheWriteTokens;
 	const noCacheInputCost = row?.no_cache_input_cost ?? 0;
 	const cachedPromptCost = row?.cached_prompt_cost ?? 0;
 	return {
@@ -697,11 +699,8 @@ function toAggregatedStats(row: AggregateRow | undefined): AggregatedStats {
 		totalInputTokens,
 		totalOutputTokens: row?.output_tokens ?? 0,
 		totalCacheReadTokens,
-		totalCacheWriteTokens: row?.cache_write_tokens ?? 0,
-		cacheRate:
-			totalInputTokens + totalCacheReadTokens > 0
-				? totalCacheReadTokens / (totalInputTokens + totalCacheReadTokens)
-				: 0,
+		totalCacheWriteTokens,
+		cacheRate: promptTokens > 0 ? totalCacheReadTokens / promptTokens : 0,
 		cacheSavings: noCacheInputCost > 0 ? (noCacheInputCost - cachedPromptCost) / noCacheInputCost : 0,
 		totalCost: row?.cost_total ?? 0,
 		unpricedRequests: row?.unpriced ?? 0,

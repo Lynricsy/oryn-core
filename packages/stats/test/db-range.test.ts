@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { getDashboardStats, getFolderStats, getRequestPage } from "@oh-my-pi/omp-stats/aggregator";
 import { initDb, insertMessageStats } from "@oh-my-pi/omp-stats/db";
 import type { MessageStats } from "@oh-my-pi/omp-stats/types";
+import { handleApi } from "../src/server";
 import { installStatsTestIsolation } from "./helpers/temp-agent";
 
 installStatsTestIsolation("@pi-stats-db-range-");
@@ -74,6 +75,22 @@ describe("getDashboardStats time range", () => {
 		const stats = await getDashboardStats("all");
 		expect(stats.overall.cacheRate).toBeCloseTo(0.6);
 		expect(stats.byModel[0]?.cacheRate).toBeCloseTo(0.6);
+	});
+
+	it("gives 2d and 3d their own windows rather than the 24h fallback", async () => {
+		await initDb();
+
+		const hour = 60 * 60 * 1000;
+		const now = Date.now();
+		insertMessageStats([
+			makeMessage(now, "now"),
+			makeMessage(now - 36 * hour, "36h-ago"),
+			makeMessage(now - 60 * hour, "60h-ago"),
+		]);
+
+		expect((await getDashboardStats("24h")).overall.totalRequests).toBe(1);
+		expect((await getDashboardStats("2d")).overall.totalRequests).toBe(2);
+		expect((await getDashboardStats("3d")).overall.totalRequests).toBe(3);
 	});
 
 	it("falls back to 24h for unknown range", async () => {

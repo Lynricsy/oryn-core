@@ -4883,11 +4883,14 @@ pub struct FormSection {
 	pub blocks: Vec<FormBlock>,
 }
 
-/// The whole form of one `ask` tool call; sent only after `set_ask_dialog` enables it with `form: true`.
+/// Exactly one representation: HTML by default, or parsed sections when the host enables structured forms with set_ask_dialog.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FormUiRequest {
 	pub id: String,
-	pub sections: Vec<FormSection>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub html: Option<String>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub sections: Option<Vec<FormSection>>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub timeout: Option<i64>,
 }
@@ -4960,7 +4963,7 @@ pub enum ExtensionUiRequest {
 	Editor(EditorUiRequest),
 	/// Every question of one extension `ui.askDialog` call; sent only after `set_ask_dialog` enables it.
 	Ask(AskUiRequest),
-	/// The whole form of one `ask` tool call; sent only after `set_ask_dialog` enables it with `form: true`.
+	/// Exactly one representation: HTML by default, or parsed sections when the host enables structured forms with set_ask_dialog.
 	Form(FormUiRequest),
 	/// Close the dialog opened by request `targetId`; a later answer to it is ignored.
 	Cancel(CancelUiRequest),
@@ -5047,7 +5050,7 @@ pub struct ConfirmUiResponse {
 	pub confirmed: bool,
 }
 
-/// Dismisses a dialog; `timedOut` reports the host's own deadline (an `ask` dialog then takes its recommended answers).
+/// Dismisses a dialog; `timedOut` reports the host's own deadline (an `ask` dialog then takes its recommended answers, a `form` its defaults).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CancelUiResponse {
 	pub id: String,
@@ -5071,6 +5074,14 @@ pub struct FormUiResponse {
 	pub form_data: Map<String, Value>,
 }
 
+/// Answers a `form` request with the submitted form data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DataUiResponse {
+	pub id: String,
+	/// Submitted values by control `name`: a string, a number, or a string array.
+	pub data: Map<String, Value>,
+}
+
 /// Host reply to an extension UI request; variants share `type` and differ by their payload key.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExtensionUiResponse {
@@ -5078,10 +5089,12 @@ pub enum ExtensionUiResponse {
 	ValueUiResponse(ValueUiResponse),
 	/// Answers a `confirm` request.
 	ConfirmUiResponse(ConfirmUiResponse),
-	/// Dismisses a dialog; `timedOut` reports the host's own deadline (an `ask` dialog then takes its recommended answers).
+	/// Dismisses a dialog; `timedOut` reports the host's own deadline (an `ask` dialog then takes its recommended answers, a `form` its defaults).
 	CancelUiResponse(CancelUiResponse),
 	/// Answers an `ask` request: one `AskAnswer` per question, in question order.
 	AnswersUiResponse(AnswersUiResponse),
+	/// Answers a `form` request with the submitted form data.
+	DataUiResponse(DataUiResponse),
 	/// Answers a `form` request, by control `name`: a string, or a string array for a multi-choice field. Choice values are option `value`s, or free text where `other` is set.
 	FormUiResponse(FormUiResponse),
 }
@@ -5101,6 +5114,9 @@ impl ExtensionUiResponse {
 		if let Ok(member) = AnswersUiResponse::deserialize(&value) {
 			return Ok(Self::AnswersUiResponse(member));
 		}
+		if let Ok(member) = DataUiResponse::deserialize(&value) {
+			return Ok(Self::DataUiResponse(member));
+		}
 		if let Ok(member) = FormUiResponse::deserialize(&value) {
 			return Ok(Self::FormUiResponse(member));
 		}
@@ -5115,6 +5131,7 @@ impl Serialize for ExtensionUiResponse {
 			Self::ConfirmUiResponse(member) => serialize_tagged(member, &[("type", "extension_ui_response")], serializer),
 			Self::CancelUiResponse(member) => serialize_tagged(member, &[("type", "extension_ui_response")], serializer),
 			Self::AnswersUiResponse(member) => serialize_tagged(member, &[("type", "extension_ui_response")], serializer),
+			Self::DataUiResponse(member) => serialize_tagged(member, &[("type", "extension_ui_response")], serializer),
 			Self::FormUiResponse(member) => serialize_tagged(member, &[("type", "extension_ui_response")], serializer),
 		}
 	}

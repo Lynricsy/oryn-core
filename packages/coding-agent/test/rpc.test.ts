@@ -67,14 +67,14 @@ describe.skipIf(!e2eApiKey("ANTHROPIC_API_KEY"))("RPC mode", () => {
 		await client.start();
 
 		const enabled = await client.setFastMode(true);
-		expect(enabled).toEqual({ enabled: true, active: true });
+		expect(enabled).toEqual({ enabled: true, active: true, ultrafast: false });
 
 		const stateWhileEnabled = await client.getState();
 		expect(stateWhileEnabled.fastModeEnabled).toBe(true);
 		expect(stateWhileEnabled.fastModeActive).toBe(true);
 
 		const disabled = await client.setFastMode(false);
-		expect(disabled).toEqual({ enabled: false, active: false });
+		expect(disabled).toEqual({ enabled: false, active: false, ultrafast: false });
 
 		const stateWhileDisabled = await client.getState();
 		expect(stateWhileDisabled.fastModeEnabled).toBe(false);

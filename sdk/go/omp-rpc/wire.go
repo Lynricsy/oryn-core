@@ -6554,10 +6554,11 @@ func (v *FormSection) decodeFrom(raw map[string]json.RawMessage) error {
 	return nil
 }
 
-// The whole form of one `ask` tool call; sent only after `set_ask_dialog` enables it with `form: true`.
+// Exactly one representation: HTML by default, or parsed sections when the host enables structured forms with set_ask_dialog.
 type FormUiRequest struct {
 	ID       string        `json:"id"`
-	Sections []FormSection `json:"sections"`
+	HTML     *string       `json:"html,omitempty"`
+	Sections []FormSection `json:"sections,omitempty"`
 	Timeout  *int64        `json:"timeout,omitempty"`
 }
 
@@ -6571,7 +6572,8 @@ func (v *FormUiRequest) decodeFrom(raw map[string]json.RawMessage) error {
 	d.constant("type", "extension_ui_request")
 	d.required("id", &out.ID)
 	d.constant("method", "form")
-	d.required("sections", &out.Sections)
+	d.optional("html", &out.HTML)
+	d.optional("sections", &out.Sections)
 	d.optional("timeout", &out.Timeout)
 	if d.err != nil {
 		return d.err
@@ -6951,7 +6953,7 @@ func (v ConfirmUiResponse) MarshalJSON() ([]byte, error) {
 	return encodeObject(plain(v), `"type":"extension_ui_response"`, nil)
 }
 
-// Dismisses a dialog; `timedOut` reports the host's own deadline (an `ask` dialog then takes its recommended answers).
+// Dismisses a dialog; `timedOut` reports the host's own deadline (an `ask` dialog then takes its recommended answers, a `form` its defaults).
 type CancelUiResponse struct {
 	ID       string `json:"id"`
 	TimedOut *bool  `json:"timedOut,omitempty"`
@@ -7036,6 +7038,35 @@ func (v FormUiResponse) MarshalJSON() ([]byte, error) {
 	return encodeObject(plain(v), `"type":"extension_ui_response"`, nil)
 }
 
+// Answers a `form` request with the submitted form data.
+type DataUiResponse struct {
+	ID string `json:"id"`
+	// Submitted values by control `name`: a string, a number, or a string array.
+	Data map[string]json.RawMessage `json:"data"`
+}
+
+func (v *DataUiResponse) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "DataUiResponse", v.decodeFrom)
+}
+
+func (v *DataUiResponse) decodeFrom(raw map[string]json.RawMessage) error {
+	var out DataUiResponse
+	d := fieldDecoder{raw: raw, owner: "DataUiResponse"}
+	d.constant("type", "extension_ui_response")
+	d.required("id", &out.ID)
+	d.required("data", &out.Data)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+func (v DataUiResponse) MarshalJSON() ([]byte, error) {
+	type plain DataUiResponse
+	return encodeObject(plain(v), `"type":"extension_ui_response"`, nil)
+}
+
 // Host reply to an extension UI request; variants share `type` and differ by their payload key.
 type ExtensionUiResponse struct {
 	// Value holds one variant. Encode-only: no discriminator tells the variants apart.
@@ -7051,6 +7082,7 @@ func (ValueUiResponse) isExtensionUiResponse()   {}
 func (ConfirmUiResponse) isExtensionUiResponse() {}
 func (CancelUiResponse) isExtensionUiResponse()  {}
 func (AnswersUiResponse) isExtensionUiResponse() {}
+func (DataUiResponse) isExtensionUiResponse()    {}
 func (FormUiResponse) isExtensionUiResponse()    {}
 
 func (v ExtensionUiResponse) MarshalJSON() ([]byte, error) {
@@ -7404,6 +7436,7 @@ func (ValueUiResponse) isRpcInbound()   {}
 func (ConfirmUiResponse) isRpcInbound() {}
 func (CancelUiResponse) isRpcInbound()  {}
 func (AnswersUiResponse) isRpcInbound() {}
+func (DataUiResponse) isRpcInbound()    {}
 func (FormUiResponse) isRpcInbound()    {}
 func (HostToolUpdate) isRpcInbound()    {}
 func (HostToolResult) isRpcInbound()    {}

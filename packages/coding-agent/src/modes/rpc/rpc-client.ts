@@ -876,8 +876,8 @@ export class RpcClient {
 	/**
 	 * Enable or disable fast mode for the active model family.
 	 */
-	async setFastMode(enabled: boolean): Promise<{ enabled: boolean; active: boolean }> {
-		const response = await this.#send({ type: "set_fast_mode", enabled });
+	async setFastMode(enabled: boolean, ultrafast?: boolean): Promise<{ enabled: boolean; active: boolean; ultrafast: boolean }> {
+		const response = await this.#send({ type: "set_fast_mode", enabled, ultrafast });
 		return this.#getData(response);
 	}
 

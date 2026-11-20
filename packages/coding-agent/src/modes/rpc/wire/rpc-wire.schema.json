@@ -5972,6 +5972,9 @@
 				"method": {
 					"const": "form"
 				},
+				"html": {
+					"type": "string"
+				},
 				"sections": {
 					"type": "array",
 					"items": {
@@ -5985,10 +5988,9 @@
 			"required": [
 				"type",
 				"id",
-				"method",
-				"sections"
+				"method"
 			],
-			"description": "The whole form of one `ask` tool call; sent only after `set_ask_dialog` enables it with `form: true`."
+			"description": "Exactly one representation: HTML by default, or parsed sections when the host enables structured forms with set_ask_dialog."
 		},
 		"CancelUiRequest": {
 			"type": "object",
@@ -6301,7 +6303,7 @@
 				"id",
 				"cancelled"
 			],
-			"description": "Dismisses a dialog; `timedOut` reports the host's own deadline (an `ask` dialog then takes its recommended answers)."
+			"description": "Dismisses a dialog; `timedOut` reports the host's own deadline (an `ask` dialog then takes its recommended answers, a `form` its defaults)."
 		},
 		"AnswersUiResponse": {
 			"type": "object",
@@ -6348,6 +6350,29 @@
 			],
 			"description": "Answers a `form` request, by control `name`: a string, or a string array for a multi-choice field. Choice values are option `value`s, or free text where `other` is set."
 		},
+		"DataUiResponse": {
+			"type": "object",
+			"properties": {
+				"type": {
+					"const": "extension_ui_response"
+				},
+				"id": {
+					"type": "string"
+				},
+				"data": {
+					"type": "object",
+					"properties": {},
+					"additionalProperties": {},
+					"description": "Submitted values by control `name`: a string, a number, or a string array."
+				}
+			},
+			"required": [
+				"type",
+				"id",
+				"data"
+			],
+			"description": "Answers a `form` request with the submitted form data."
+		},
 		"ExtensionUiResponse": {
 			"anyOf": [
 				{
@@ -6361,6 +6386,9 @@
 				},
 				{
 					"$ref": "#/$defs/AnswersUiResponse"
+				},
+				{
+					"$ref": "#/$defs/DataUiResponse"
 				},
 				{
 					"$ref": "#/$defs/FormUiResponse"
