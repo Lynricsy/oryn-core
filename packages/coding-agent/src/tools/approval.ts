@@ -118,8 +118,9 @@ export interface ResolvedApproval {
 	override: boolean;
 	source?: "tool" | "user" | "mode" | "restriction";
 	/**
-	 * `tools.approval` key whose user policy decided the call: the tool's name, or its legacy name
-	 * when a renamed tool inherits that policy. Kept when a restricted folder turns it into a prompt.
+	 * `tools.approval` key whose user policy decided the call: the tool's name, its legacy name
+	 * when a renamed tool inherits that policy, or the keyed sub-tool a dispatcher's decision is
+	 * about. Kept when a restricted folder turns it into a prompt.
 	 */
 	policyKey?: string;
 }
@@ -199,6 +200,7 @@ function resolveCachedModeApproval(
 		tier: decision.tier,
 		override: false,
 		source: "mode" as const,
+		...(decision.policyKey ? { policyKey: decision.policyKey } : {}),
 	};
 	const targets = approvalCacheTargets(tool, args);
 	if (targets.length === 0) {
@@ -279,11 +281,14 @@ function normalizeDecision(value: unknown): Omit<ResolvedApproval, "policy"> & {
 		const tier = isToolTier(record.tier) ? record.tier : "exec";
 		const reason = typeof record.reason === "string" && record.reason.length > 0 ? record.reason : undefined;
 		const policy = normalizePolicy(record.policy);
+		const policyKey =
+			typeof record.policyKey === "string" && record.policyKey.length > 0 ? record.policyKey : undefined;
 		return {
 			tier,
 			override: record.override === true,
 			...(policy ? { policy } : {}),
 			...(reason ? { reason } : {}),
+			...(policyKey ? { policyKey } : {}),
 		};
 	}
 
@@ -343,6 +348,11 @@ export function approvalRestrictions(
  *
  * Resolution order:
  *  1. Tool `approval(args)` decision, defaulting to tier "exec" when omitted.
+ *     A decision may carry a `policyKey` — `tools.approval.<policyKey>` is then
+ *     the user override consulted instead of `tools.approval.<tool.name>`, with
+ *     the invoking tool's own policy as the fallback when the user set none for
+ *     the keyed sub-tool (e.g. a `terminal` send without a terminal policy still
+ *     honors `tools.approval.bash`).
  *  2. User per-tool override, if set and valid.
  *  3. Active mode tier comparison. In `always-ask-cached`, a call whose
  *     `approvalCacheTargets` are all granted in `grants` is allowed instead
@@ -388,14 +398,21 @@ function resolvePolicy(
 	context?: AgentToolContext,
 ): ResolvedApproval {
 	const decision = getToolDecision(tool, args, context);
-	const userPolicy = Object.hasOwn(userConfig, tool.name) ? normalizePolicy(userConfig[tool.name]) : undefined;
+	const policyKey = decision.policyKey ?? tool.name;
+	const userPolicy = Object.hasOwn(userConfig, policyKey) ? normalizePolicy(userConfig[policyKey]) : undefined;
+	const fallbackPolicy =
+		policyKey !== tool.name && userPolicy === undefined && Object.hasOwn(userConfig, tool.name)
+			? normalizePolicy(userConfig[tool.name])
+			: undefined;
+	const effectiveUserPolicy = userPolicy ?? fallbackPolicy;
+	const userPolicyKey = userPolicy !== undefined ? policyKey : tool.name;
 
 	// Legacy-name fallback for renamed tools (e.g. MCP mints that gained digits).
 	// Fail-closed: only `deny`/`prompt` carry over from the old key, so a
 	// forgotten restrictive policy keeps protecting the renamed tool, while a
 	// stale `allow` cannot mask a `deny` another user sets under the new name.
 	const legacyPolicy =
-		userPolicy === undefined &&
+		effectiveUserPolicy === undefined &&
 		typeof tool.legacyName === "string" &&
 		tool.legacyName !== tool.name &&
 		Object.hasOwn(userConfig, tool.legacyName)
@@ -403,8 +420,8 @@ function resolvePolicy(
 			: undefined;
 	const inheritedPolicy = legacyPolicy === "deny" || legacyPolicy === "prompt" ? legacyPolicy : undefined;
 	const inheritedPolicyKey = inheritedPolicy !== undefined ? tool.legacyName : undefined;
-	const combinedUserPolicy = userPolicy ?? inheritedPolicy;
-	const combinedUserPolicyKey = userPolicy !== undefined ? tool.name : inheritedPolicyKey;
+	const combinedUserPolicy = effectiveUserPolicy ?? inheritedPolicy;
+	const combinedUserPolicyKey = effectiveUserPolicy !== undefined ? userPolicyKey : inheritedPolicyKey;
 
 	if (decision.policy === "deny") {
 		return {
@@ -412,6 +429,7 @@ function resolvePolicy(
 			tier: decision.tier,
 			override: decision.override,
 			source: "tool",
+			...(decision.policyKey ? { policyKey: decision.policyKey } : {}),
 			...(decision.reason ? { reason: decision.reason } : {}),
 		};
 	}
@@ -432,6 +450,7 @@ function resolvePolicy(
 				tier: decision.tier,
 				override: false,
 				source: "tool",
+				...(decision.policyKey ? { policyKey: decision.policyKey } : {}),
 				...(decision.reason ? { reason: decision.reason } : {}),
 			};
 		}
@@ -450,6 +469,7 @@ function resolvePolicy(
 			tier: decision.tier,
 			override: true,
 			source: "tool",
+			...(decision.policyKey ? { policyKey: decision.policyKey } : {}),
 			...(decision.reason ? { reason: decision.reason } : {}),
 		};
 	}
@@ -460,6 +480,7 @@ function resolvePolicy(
 			tier: decision.tier,
 			override: false,
 			source: "tool",
+			...(decision.policyKey ? { policyKey: decision.policyKey } : {}),
 			...(decision.reason ? { reason: decision.reason } : {}),
 		};
 	}
@@ -487,6 +508,7 @@ function resolvePolicy(
 		tier: decision.tier,
 		override: false,
 		source: "mode",
+		...(decision.policyKey ? { policyKey: decision.policyKey } : {}),
 		...(decision.reason ? { reason: decision.reason } : {}),
 	};
 }
@@ -585,7 +607,8 @@ export function sessionApprovalScope(
 	toolName: string,
 ): { subject: string; key: string } | undefined {
 	if (resolved.policy !== "prompt" || resolved.source !== "mode") return undefined;
-	return { subject: toolName, key: `${toolName}\0${resolved.tier}` };
+	const subject = resolved.policyKey ?? toolName;
+	return { subject, key: `${subject}\0${resolved.tier}` };
 }
 
 /**

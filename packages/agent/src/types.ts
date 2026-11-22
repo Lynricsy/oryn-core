@@ -1114,6 +1114,11 @@ export type ToolApprovalDecision =
 			reason?: string;
 			override?: boolean;
 			policy?: "allow" | "deny" | "prompt";
+			/** User-policy key for this decision. When set, `tools.approval.<policyKey>`
+			 *  is consulted instead of `tools.approval.<tool.name>`. Lets a dispatcher
+			 *  tool (e.g. `terminal` delegating to the bash policy) scope user
+			 *  allow/deny/prompt policies to the tool it dispatches into. */
+			policyKey?: string;
 	  };
 export type ToolApproval = ToolApprovalDecision | ((args: unknown, context?: AgentToolContext) => ToolApprovalDecision);
 

@@ -168,7 +168,7 @@ describe("startup model fallback notice after first-run setup", () => {
 			mode = this;
 			throw interrupted;
 		});
-		spyOn(ModelRegistry.prototype, "refreshInBackground").mockImplementation(() => {});
+		spyOn(ModelRegistry.prototype, "refreshInBackground").mockImplementation(async () => {});
 		spyOn(pluginHelpers, "preloadPluginRoots").mockResolvedValue(undefined);
 		beginStartupComposer({ terminal: new VirtualTerminal(), version: "test", cache: false });
 		const originalIsTTY = process.stdin.isTTY;

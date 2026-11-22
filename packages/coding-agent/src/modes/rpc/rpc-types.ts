@@ -68,8 +68,6 @@ import type { CacheWarmingMode } from "../../session/cache-warmer";
 import type { FileEntry, SessionEntry, SessionTreeNode } from "../../session/session-entries";
 import type { UsageLimitState } from "../../session/usage-limit";
 import type { AvailableSlashCommandSource } from "../../slash-commands/available-commands";
-import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
-import type { AgentProgress } from "@oh-my-pi/pi-tui/tools/task";
 import type { RpcModelPickerResult } from "./rpc-model-picker";
 import type { SubagentEventPayload, SubagentLifecyclePayload, SubagentProgressPayload } from "../../task";
 import type { DebugParams } from "../../tools/debug";
@@ -1482,10 +1480,10 @@ export interface RpcPlanApprovalResult {
 }
 
 /**
- * Emitted when the agent submits a plan for approval (a `write` to
- * `xd://propose` while plan mode is active). The host answers with a
- * `plan_approval` command. `options` lists the approval choices; `"refine"`
- * is answered with `approved: false` plus `feedback`, not `option`.
+ * Emitted when the agent submits a plan for approval (a `propose` call while
+ * plan mode is active, direct or dispatched through `bash`). The host answers
+ * with a `plan_approval` command. `options` lists the approval choices;
+ * `"refine"` is answered with `approved: false` plus `feedback`, not `option`.
  */
 export interface RpcPlanProposalFrame {
 	type: "plan_proposal";
@@ -2305,7 +2303,7 @@ export interface RpcActiveTool {
 
 /**
  * Result of get_active_tools: active top-level tools (TUI /tools rows),
- * followed by xd:// mounted entries (the `~ xd://name` rows).
+ * followed by mounted tool-command entries.
  */
 export interface RpcActiveToolsResult {
 	tools: RpcActiveTool[];

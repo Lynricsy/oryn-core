@@ -115,7 +115,6 @@ import {
 import type { AskToolDetails } from "@oh-my-pi/pi-tui/tools/ask";
 import type { IrcMessage } from "@oh-my-pi/pi-tui/tools/irc";
 import { formatArtifactErrorNotice, type OutputMeta, stripOutputNotice } from "@oh-my-pi/pi-tui/tools/output-meta";
-import { PROPOSE_DEVICE_NAME } from "@oh-my-pi/pi-tui/tools/resolve";
 import { truncateMiddle } from "@oh-my-pi/pi-tui/tools/streaming-output";
 import { isClosedTodo, type TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
 import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
@@ -460,7 +459,6 @@ import {
 	type InterruptedThinkingDetails,
 	isEmptyErrorTurn,
 	isInterruptReason,
-	titleContextWordCount,
 	isUserAuthoredMessage,
 	isUserInterruptAbort,
 	isUserInvokedSkillPrompt,
