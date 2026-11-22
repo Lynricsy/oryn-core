@@ -87,6 +87,7 @@ import {
 	scanFileForConflicts,
 } from "./conflict-detect";
 import { executeReadUrl, fetchReadUrl, parseReadUrlTarget, type ReadUrlEntry } from "./fetch";
+import { cfgReadRemoteOnly, orynRemoteOnlyRefusal } from "./oryn-restrict";
 import { approvalDirectoryKey } from "./approval-cache";
 import { approvalTargetKey, approvalTargetNamesFile, isApprovalPublicUrl } from "./approval-targets";
 import {
@@ -2146,6 +2147,10 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 		if (mixedParts) return this.#readDelimitedParts(mixedParts, signal, toolContext);
 		const queryParts = await splitQueryPathList(readPath, this.session.cwd);
 		if (queryParts) return this.#readDelimitedParts(queryParts, signal, toolContext);
+		if (cfgReadRemoteOnly.get(this.session.settings)) {
+			const refusal = orynRemoteOnlyRefusal(extractUriScheme(readPath), parseReadUrlTarget(readPath)?.path ?? null);
+			if (refusal) throw new ToolError(refusal);
+		}
 		// Filesystem-backed reads choose JSON versus image questions after resolving
 		// the literal file and sniffing its content, not from its final extension.
 		// A `local://` URL is resolved by its handler first, so a question

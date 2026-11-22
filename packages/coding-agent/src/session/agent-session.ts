@@ -313,6 +313,7 @@ import type { EditModeSetting } from "../edit/settings";
 import { getEditStore } from "../edit/store";
 import { resolveFileDisplayMode } from "../utils/file-display-mode";
 import { extractFileMentions, generateFileMentionMessages } from "../utils/file-mentions";
+import { cfgPromptFileMentions } from "../tools/oryn-restrict";
 import { normalizeModelContextImages } from "../utils/image-loading";
 import { resumeCommand } from "../utils/resume-command";
 import {
@@ -10314,7 +10315,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			this.#pendingNextTurnMessages = [];
 
 			// Auto-read @filepath mentions
-			const fileMentions = extractFileMentions(expandedText);
+			const fileMentions = cfgPromptFileMentions.get(this.settings) ? extractFileMentions(expandedText) : [];
 			if (fileMentions.length > 0) {
 				const fileMentionMessages = await generateFileMentionMessages(fileMentions, this.sessionManager.getCwd(), {
 					autoResizeImages: cfgImagesAutoResize.get(this.settings),
