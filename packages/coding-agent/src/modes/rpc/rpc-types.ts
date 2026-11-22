@@ -68,6 +68,9 @@ import type { CacheWarmingMode } from "../../session/cache-warmer";
 import type { FileEntry, SessionEntry, SessionTreeNode } from "../../session/session-entries";
 import type { UsageLimitState } from "../../session/usage-limit";
 import type { AvailableSlashCommandSource } from "../../slash-commands/available-commands";
+import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
+import type { AgentProgress } from "@oh-my-pi/pi-tui/tools/task";
+import type { RpcModelPickerResult } from "./rpc-model-picker";
 import type { SubagentEventPayload, SubagentLifecyclePayload, SubagentProgressPayload } from "../../task";
 import type { DebugParams } from "../../tools/debug";
 import type { RpcBrowserHostInfo } from "./rpc-browser-host";
@@ -113,6 +116,8 @@ export type RpcCommand =
 			images?: ImageContent[];
 	  }
 	| { id?: string; type: "abort_and_restore_queue" }
+	| { id?: string; type: "abort_and_deliver_queue" }
+	| { id?: string; type: "resume" }
 	| { id?: string; type: "new_session"; parentSession?: string }
 	| { id?: string; type: "drop_session" }
 	| {
@@ -204,9 +209,17 @@ export type RpcCommand =
 	| { id?: string; type: "dictation_stop" }
 
 	// Model
-	| { id?: string; type: "set_model"; provider: string; modelId: string }
+	| {
+			id?: string;
+			type: "set_model";
+			provider: string;
+			modelId: string;
+			thinkingLevel?: ConfiguredThinkingLevel;
+			role?: string;
+	  }
 	| { id?: string; type: "cycle_model"; direction?: "forward" | "backward" }
 	| { id?: string; type: "get_available_models"; forceRefresh?: boolean }
+	| { id?: string; type: "get_model_picker"; query?: string; limit?: number }
 	| {
 			id?: string;
 			type: "discover_provider_models";
@@ -223,7 +236,7 @@ export type RpcCommand =
 	  }
 
 	// Thinking
-	| { id?: string; type: "set_thinking_level"; level: ThinkingLevel | "auto" }
+	| { id?: string; type: "set_thinking_level"; level: ConfiguredThinkingLevel }
 	| { id?: string; type: "cycle_thinking_level" }
 	| { id?: string; type: "get_available_thinking_levels" }
 
@@ -727,6 +740,10 @@ export interface RpcSessionState {
 	thinkingConfigured?: ConfiguredThinkingLevel;
 	/** Levels the active model actually supports (empty = model does not reason); pickers must not offer unsupported values. */
 	availableThinkingLevels?: ThinkingLevel[];
+	/** The user's thinking selector: `auto` while auto mode picks the effort. */
+	configuredThinkingLevel?: ConfiguredThinkingLevel;
+	/** Selectors the active model accepts: `off`, `auto`, then its efforts. */
+	thinkingLevels?: ConfiguredThinkingLevel[];
 	isStreaming: boolean;
 	isCompacting: boolean;
 	/** Manual compaction that prepares without blocking the current turn. */
@@ -2415,6 +2432,8 @@ export type RpcResponse =
 			success: true;
 			data: RpcAbortAndRestoreQueueResult;
 	  }
+	| { id?: string; type: "response"; command: "abort_and_deliver_queue"; success: true; data: { aborted: boolean } }
+	| { id?: string; type: "response"; command: "resume"; success: true }
 	| {
 			id?: string;
 			type: "response";
@@ -2584,6 +2603,13 @@ export type RpcResponse =
 			command: "discover_provider_models";
 			success: true;
 			data: { models: RpcDiscoveredModel[] };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_model_picker";
+			success: true;
+			data: RpcModelPickerResult;
 	  }
 
 	// Thinking

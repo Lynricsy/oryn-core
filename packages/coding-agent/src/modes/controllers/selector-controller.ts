@@ -6,7 +6,7 @@ import type { Component, OverlayHandle } from "@oh-my-pi/pi-tui";
 import { Loader, Spacer, Text } from "@oh-my-pi/pi-tui";
 import { formatKeyHint } from "@oh-my-pi/pi-tui/app-keybindings";
 import { appKey, editorKey } from "@oh-my-pi/pi-tui/chrome/keybinding-hints";
-import { getAgentDbPath, getProjectDir, logger, normalizePathForComparison, sanitizeText } from "@oh-my-pi/pi-utils";
+import { getProjectDir, logger, normalizePathForComparison, sanitizeText } from "@oh-my-pi/pi-utils";
 import { reset as resetCapabilities } from "../../capability";
 import { showGitOverlay } from "../../cli/git-tui";
 import { formatLoginIdentity } from "../../cli/oauth-terminal";
@@ -18,7 +18,8 @@ import {
 	modelPresetSavedMessage,
 	saveModelPreset,
 } from "../../config/model-presets";
-import { resolveModelRoleValue } from "../../config/model-resolver";
+import { resolveModelRoleValue, scopeAllowList } from "../../config/model-resolver";
+import { routedModelsAreEqual } from "@oh-my-pi/pi-catalog/models";
 import { formatModelSelectorValue } from "@oh-my-pi/pi-tui/overlays/model-selector";
 import { getRoleInfo } from "../../config/model-roles";
 import { settings } from "../../config/settings";
@@ -37,6 +38,7 @@ import type { AgentHubOpenOptions, InteractiveModeContext, ResumeSessionOptions 
 import type { SessionOAuthAccountList } from "../../session/agent-session-types";
 import { runAskReanswer } from "../../session/ask-reanswer";
 import type { ResetCreditAccountStatus, ResetCreditRedeemOutcome } from "../../session/auth-storage";
+import { credentialStoreLabel } from "../../session/auth-broker-config";
 import {
 	createForeignSessionStore,
 	foreignSessionInfoToSessionInfo,
@@ -733,6 +735,13 @@ export class SelectorController {
 			this.ctx.ui.requestRender();
 		};
 		const isCurrent = () => this.#openMenus.get(menuKind) === menu;
+		// One pick per target: an Enter repeated while that pick applies is dropped, but a
+		// pick of a different model or role made meanwhile queues behind it, so a slower
+		// earlier apply can never resolve after and overwrite a newer pick; a queued pick
+		// that a newer one supersedes is dropped before it applies.
+		let pickInFlightKey: string | null = null;
+		let latestPickId = 0;
+		let pickQueue: Promise<void> = Promise.resolve();
 		const picker = new ModelPickerComponent(
 			this.ctx.ui,
 			createModelBrowserSource(this.ctx.settings, model => viewed.effectiveServiceTier(model)),
@@ -740,20 +749,44 @@ export class SelectorController {
 			this.ctx.session.scopedModels,
 			{
 				onPick: async (model, selector, { overContext, thinkingLevel }) => {
-					if (!isCurrent()) return;
+					const key = `model:${selector}:${thinkingLevel ?? ""}`;
+					if (!isCurrent() || pickInFlightKey === key) return;
+					pickInFlightKey = key;
+					const pickId = ++latestPickId;
+					const prev = pickQueue;
+					let release!: () => void;
+					pickQueue = new Promise<void>(resolve => {
+						release = resolve;
+					});
 					try {
+						await prev;
+						// A closed picker never applies, and a newer pick supersedes this one.
+						if (!isCurrent() || pickId !== latestPickId) return;
 						// Over-context pick: close the picker first so the compaction
 						// loader is visible.
 						if (overContext) done();
 						await this.#applySessionModel(model, selector, thinkingLevel, overContext);
-						if (!overContext) done();
+						if (!overContext && pickId === latestPickId) done();
 					} catch (error) {
 						this.ctx.showError(error instanceof Error ? error.message : String(error));
+					} finally {
+						if (pickId === latestPickId) pickInFlightKey = null;
+						release();
 					}
 				},
 				onPickRole: async entry => {
-					if (!isCurrent()) return;
+					const key = `role:${entry.role}`;
+					if (!isCurrent() || pickInFlightKey === key) return;
+					pickInFlightKey = key;
+					const pickId = ++latestPickId;
+					const prev = pickQueue;
+					let release!: () => void;
+					pickQueue = new Promise<void>(resolve => {
+						release = resolve;
+					});
 					try {
+						await prev;
+						if (!isCurrent() || pickId !== latestPickId) return;
 						await this.ctx.viewSession.applyRoleModel(entry);
 						this.ctx.statusLine.invalidate();
 						this.ctx.updateEditorBorderColor();
@@ -761,9 +794,12 @@ export class SelectorController {
 							quickRoleOrder.map(role => ({ label: role })),
 							quickRoleOrder.indexOf(entry.role),
 						);
-						done();
+						if (pickId === latestPickId) done();
 					} catch (error) {
 						this.ctx.showError(error instanceof Error ? error.message : String(error));
+					} finally {
+						if (pickId === latestPickId) pickInFlightKey = null;
+						release();
 					}
 				},
 				onPickTask: (_model, selector) => {
@@ -782,6 +818,10 @@ export class SelectorController {
 					viewed.setThinkingLevel(level);
 					this.ctx.statusLine.invalidate();
 					this.ctx.updateEditorBorderColor();
+				},
+				onCatalogRefreshed: async () => {
+					await this.ctx.session.refreshScopedModels();
+					return this.ctx.session.scopedModels;
 				},
 				onCancel: done,
 			},
@@ -954,18 +994,15 @@ export class SelectorController {
 							const exposesPersistedFallback =
 								fallbackProvenance === "project" || fallbackProvenance === "global";
 							if (fallbackRoleValue && exposesPersistedFallback) {
-								const scopedModels = this.ctx.session.scopedModels.map(sm => sm.model);
+								const session = this.ctx.session;
 								const availableModels =
-									scopedModels.length > 0 ? scopedModels : this.ctx.session.getAvailableModels();
+									session.scopedModels.length > 0
+										? scopeAllowList(session.scopedModels)
+										: session.getAvailableModels();
 								const resolved = resolveModelRoleValue(fallbackRoleValue, availableModels, {
 									settings: this.ctx.settings,
 								});
-								const live = this.ctx.session.model;
-								const liveDiffers =
-									!live ||
-									!resolved.model ||
-									live.provider !== resolved.model.provider ||
-									live.id !== resolved.model.id;
+								const liveDiffers = !routedModelsAreEqual(session.model, resolved.model);
 								if (resolved.model && (fallbackRoleValue !== previousEffectiveRoleValue || liveDiffers)) {
 									const fallbackModel = resolved.model;
 									const isAuto = resolved.thinkingLevel === AUTO_THINKING;
@@ -2167,7 +2204,8 @@ export class SelectorController {
 					0,
 				),
 			);
-			block.addChild(new Text(theme.fg("dim", `Credentials saved to ${getAgentDbPath()}`), 1, 0));
+			const destination = await credentialStoreLabel(getOAuthCredentialProvider(providerId));
+			block.addChild(new Text(theme.fg("dim", `Credentials saved to ${destination}`), 1, 0));
 			this.ctx.present(block);
 			return true;
 		} catch (error: unknown) {
@@ -2185,6 +2223,8 @@ export class SelectorController {
 
 	async #handleCredentialLogout(providerId: string, account: LogoutAccount): Promise<void> {
 		try {
+			// Before the logout: removing a broker-unserved provider's last local login hands it back to the broker.
+			const source = await credentialStoreLabel(providerId);
 			const { removed, remainingSource } = await logoutCredential(
 				this.ctx.session,
 				providerId,
@@ -2206,7 +2246,7 @@ export class SelectorController {
 					0,
 				),
 			);
-			block.addChild(new Text(theme.fg("dim", `Credential removed from ${getAgentDbPath()}`), 1, 0));
+			block.addChild(new Text(theme.fg("dim", `Credential removed from ${source}`), 1, 0));
 			if (remainingSource) {
 				block.addChild(
 					new Text(theme.fg("warning", `${providerId} is still authenticated via ${remainingSource}`), 1, 0),
