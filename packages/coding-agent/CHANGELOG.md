@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- RPC `get_usage` rows keep each account's own label (email, account id, or org) instead of every row of the active provider carrying the session's account, and collapse routing-specific copies of a shared quota like the TUI dashboard does ([#72](https://github.com/nornzach/oh-my-pi-gui/issues/72)).
 - RPC hosts can remove a global settings override again, restoring the value from the remaining configuration layers.
 - Custom compiled distributions can include their HTML session viewer so exports open without an upstream-hosted viewer release.
 ### Breaking Changes
