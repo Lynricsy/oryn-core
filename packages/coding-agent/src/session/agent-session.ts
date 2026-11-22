@@ -324,6 +324,7 @@ import {
 	splitCardTitle,
 } from "../utils/title-card";
 import { generateSessionTitle, nerdGlyphsActive } from "../utils/title-generator";
+import { orynHostRendersNerdGlyphs } from "../utils/oryn-nerd-glyphs";
 import { TokenRateMeter } from "../utils/token-rate";
 import { buildNamedToolChoice, isToolChoiceActive } from "../utils/tool-choice";
 import type { VibeModeState } from "../vibe/state";
@@ -12918,11 +12919,13 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 	/**
 	 * The icons a new card may show: `title.icons`, an emoji where Nerd Fonts glyphs do not render, no card when
 	 * boring. Only the TUI's own terminal can have the font: an rpc-ui host draws the title in its own, whatever
-	 * symbol preset the shared config picked for the terminal.
+	 * symbol preset the shared config picked for the terminal, unless it declares one ({@link orynHostRendersNerdGlyphs}).
 	 */
 	#cardIcons(): TitleIcons {
 		const icons = cfgTitleIcons.get(this.settings);
-		return icons === "nf+emoji" && !(isInteractiveHost() && nerdGlyphsActive()) ? "emoji" : icons;
+		return icons === "nf+emoji" && !(isInteractiveHost() ? nerdGlyphsActive() : orynHostRendersNerdGlyphs())
+			? "emoji"
+			: icons;
 	}
 
 	#fallBackFromTitleFork(input: TitleInput, signal: AbortSignal): void {
