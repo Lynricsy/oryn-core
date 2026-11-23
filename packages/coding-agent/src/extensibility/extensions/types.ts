@@ -1873,12 +1873,17 @@ export interface RegisteredCommand {
 export interface TodoBackendDefinition {
 	/** `todo.backend` value that selects this backend: letters, digits, `.`, `_` and `-`. `native` is reserved. */
 	id: string;
+	/** Name shown for the backend in Settings; the id when omitted. */
+	label?: string;
+	/** One line shown beside the label in Settings. */
+	description?: string;
 	/**
 	 * Called in the main session with the whole todo list after omp committed a change to it:
 	 * a `todo` call, a `/todo` edit, RPC `set_todos`, `/new`, or a resume, rewind, branch, fork or
 	 * move to another session file that left another list or session id. An empty list is sent
 	 * only once omp has called a todo backend for this session; `/new`, a resume, a branch and a
 	 * fork carry that over. Tasks carry `content` and `status` only.
+	 * A backend the user picks in Settings is sent the current list then, without a change.
 	 * One call runs at a time, and lists that change meanwhile collapse into the newest. A throw,
 	 * or no answer within the extension handler timeout, is reported as an extension error and
 	 * leaves omp's list as it is; the next change sends the whole list again, even while a call
@@ -2427,6 +2432,8 @@ export interface ProviderModelConfig {
 	premiumMultiplier?: number;
 	/** Maximum context window size in tokens. */
 	contextWindow: number;
+	/** Optional larger window selected by the extended-context policy. */
+	maxContextWindow?: number;
 	/** Maximum output tokens. */
 	maxTokens: number;
 	/** WebSocket preference within catalog policy; explicit false disables transport selection. */
