@@ -4,14 +4,16 @@
  */
 
 import { resolveUsedFraction, type UsageReport } from "@oh-my-pi/pi-ai";
+import { dedupeUsageReports } from "@oh-my-pi/pi-ai/auth/usage-report";
 import { listProvidersWithEnvKey } from "@oh-my-pi/pi-ai/env-api-key";
 import { getOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
-import type { Settings } from "../../config/settings";
+import { authPolicyFor } from "@oh-my-pi/pi-catalog/compat/auth";
+import { SETTING_TABS, TAB_GROUPS, TAB_METADATA } from "@oh-my-pi/pi-tui/overlays/settings-defs";
+import { collapseSharedUsageReports } from "@oh-my-pi/pi-tui/overlays/usage-display";
 import { orderedSettings } from "../../config/all-settings";
 import { cfgDisabledProviders } from "../../config/model-settings";
 import { lookup as lookupSetting } from "../../config/registry";
-import { SETTING_TABS, TAB_GROUPS, TAB_METADATA } from "@oh-my-pi/pi-tui/overlays/settings-defs";
-import { collapseSharedUsageReports } from "@oh-my-pi/pi-tui/overlays/usage-display";
+import type { Settings } from "../../config/settings";
 import type { AgentSession } from "../../session/agent-session";
 import type {
 	RpcProviderInfo,
@@ -61,14 +63,19 @@ function mapUsageReport(report: UsageReport, accountLabel?: string): RpcUsageRep
 	};
 }
 
+function canonicalUsageProvider(report: UsageReport): UsageReport {
+	const provider = authPolicyFor(report.provider)?.id ?? authPolicyFor(report.provider.toLowerCase())?.id;
+	return provider && provider !== report.provider ? { ...report, provider } : report;
+}
+
 /** Build the structured usage result: provider reports + local session tallies. */
 export async function buildRpcUsageResult(session: AgentSession): Promise<RpcUsageResult> {
 	const reports: RpcUsageReport[] = [];
 	try {
 		const fetched = await session.fetchUsageReports();
-		// Every display consumer collapses routing-specific copies of a shared
-		// quota; the RPC projection must not hand hosts the uncollapsed rows.
-		const raw = fetched ? collapseSharedUsageReports(fetched) : null;
+		// Combine route reports while account and organization IDs are still
+		// available. Collapse shared limits afterwards, including across routes.
+		const raw = fetched ? collapseSharedUsageReports(dedupeUsageReports(fetched.map(canonicalUsageProvider))) : null;
 		if (raw && raw.length > 0) {
 			const currentProvider = session.model?.provider;
 			const authStorage = session.modelRegistry.authStorage;

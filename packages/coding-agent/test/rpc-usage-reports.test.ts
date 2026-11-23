@@ -104,6 +104,49 @@ describe("buildRpcUsageResult account attribution", () => {
 });
 
 describe("buildRpcUsageResult shared-quota collapsing", () => {
+	test("returns one quota row per account when both API routes report it", async () => {
+		const first = { email: "first@example.com", orgId: "org-a" };
+		const second = { email: "second@example.com", orgId: "org-b" };
+		const session = sessionWith(
+			[
+				identifiedReport(first, [limit("api-weekly", "anthropic:7d")]),
+				identifiedReport(second, [limit("api-weekly", "anthropic:7d")]),
+				{
+					...identifiedReport(first, [limit("v1-weekly", "anthropic:7d"), limit("v1-opus", "anthropic:7d:opus")]),
+					provider: "Anthropic",
+				},
+				{ ...identifiedReport(second, [limit("v1-weekly", "anthropic:7d")]), provider: "Anthropic" },
+			],
+			"first@example.com",
+		);
+
+		const { reports } = await buildRpcUsageResult(session);
+
+		expect(reports.map(row => [row.provider, row.account, row.limits.length])).toEqual([
+			["anthropic", first.email, 2],
+			["anthropic", second.email, 1],
+		]);
+		expect(reports[0]?.limits.map(row => row.id)).toContain("v1-opus");
+	});
+
+	test("does not merge separate subscriptions with the same email", async () => {
+		const email = "me@example.com";
+		const session = sessionWith(
+			[
+				{ ...identifiedReport({ email, orgId: "org-a" }, [limit("a", "anthropic:7d")]), provider: "Anthropic" },
+				identifiedReport({ email, orgId: "org-b" }, [limit("b", "anthropic:7d")]),
+			],
+			email,
+		);
+
+		const { reports } = await buildRpcUsageResult(session);
+
+		expect(reports.map(row => [row.provider, row.account, row.limits.map(item => item.id)])).toEqual([
+			["anthropic", email, ["a"]],
+			["anthropic", email, ["b"]],
+		]);
+	});
+
 	test("collapses routing copies of one shared quota to a single limit", async () => {
 		const session = sessionWith(
 			[report("first@example.com", [limit("api", "anthropic:7d"), limit("v1", "anthropic:7d")])],
