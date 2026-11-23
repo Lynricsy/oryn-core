@@ -4092,6 +4092,31 @@ export class SessionManager {
 	}
 
 	/**
+	 * Persist the current in-memory leaf as an off-branch `custom` entry so
+	 * reloading the session file restores the selected branch (including a
+	 * cleared `null` leaf) instead of jumping back to the last physical entry.
+	 * No-op when the session is not on disk or the file's tail already replays
+	 * to the current leaf.
+	 */
+	persistLeaf(): string | undefined {
+		if (!this.#persist || !this.#sessionFile || !this.#shouldHaveSessionFile()) return undefined;
+		const leafId = this.#index.leafId();
+		const last = this.#entries.at(-1);
+		if ((last ? sessionEntryLeafId(last) : null) === leafId) return undefined;
+		const entry: CustomEntry = {
+			type: "custom",
+			customType: "oryn-leaf",
+			id: generateId(this.#index),
+			parentId: leafId,
+			timestamp: nowIso(),
+			runtime: currentRuntimeIdentity(),
+			activeLeafId: leafId,
+		};
+		this.#recordEntry(entry);
+		return entry.id;
+	}
+
+	/**
 	 * Durably move the active branch past a discarded entry.
 	 *
 	 * The loader reconstructs the active branch from the last physical journal

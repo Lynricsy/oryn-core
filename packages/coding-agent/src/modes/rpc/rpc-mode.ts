@@ -238,6 +238,7 @@ import { RpcSubagentRegistry, readRpcSubagentTranscript, resolveOwnedLiveSubagen
 import { startRpcTan } from "./rpc-tan";
 import { type HostedComponentFactory, showHostedComponent } from "./rpc-custom-ui";
 import { OrynComposerPredictor } from "./oryn-composer-prediction";
+import { persistRpcLeaf } from "./oryn-leaf";
 import { handleOrynMarkSessionStart, handleOrynSelectModel } from "./oryn-model-source";
 import { OrynShellPseudoProjector } from "./oryn-shell-pseudo";
 import { OrynToolExecutor } from "./oryn-tool-exec";
@@ -2986,6 +2987,10 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 						// Rechecked after the summary: work may have started while it ran.
 						requireIdle: true,
 					});
+					if (!result.cancelled && !result.aborted && !result.reopenAsk) {
+						const flush = persistRpcLeaf(session);
+						if (flush) await flush;
+					}
 				} catch (err) {
 					if (err instanceof SessionBusyError) return error(id, "navigate_tree", err.message, "session_busy");
 					throw err;
@@ -4043,6 +4048,10 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				}
 				try {
 					const result = await applyRpcSwitchLeaf(session, command, rpcUiContext);
+					if (!result.cancelled && !result.aborted && !result.reopenAsk) {
+						const flush = persistRpcLeaf(session);
+						if (flush) await flush;
+					}
 					askReanswerAwaitingResumeLeafId = result.askReanswerCommitted ? result.activeLeafId : undefined;
 					return success(id, "switch_leaf", result);
 				} catch (err) {
