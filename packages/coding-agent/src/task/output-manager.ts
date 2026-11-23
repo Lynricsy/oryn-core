@@ -14,6 +14,7 @@ import * as fs from "node:fs/promises";
 import { ADVISOR_TRANSCRIPT_STEM } from "../advisor/transcript-recorder";
 import type { Settings } from "../config/settings";
 import { cfgTaskCrossInstance } from "./settings";
+import { isReservedArtifactStem } from "../session/oryn-artifact-sidecars";
 /** HUD expander click target reserved by the allocator so it cannot name a subagent. */
 export const PINNED_HUD_TOGGLE_ID = "@omp:toggle-pinned-hud";
 
@@ -26,7 +27,10 @@ export const PINNED_HUD_TOGGLE_ID = "@omp:toggle-pinned-hud";
 export class AgentOutputManager {
 	#initialized = false;
 	#initializing: Promise<void> | undefined;
-	/** Final ids already handed out, relative to this manager's scope. */
+	/**
+	 * Final ids already handed out, relative to this manager's scope, lower-cased (Oryn): ids name
+	 * files and directories, and on case-folding filesystems `Local-2` and `local-2` are one path.
+	 */
 	readonly #taken = new Set<string>();
 	readonly #getArtifactsDir: () => string | null;
 	readonly #parentPrefix: string | undefined;
@@ -80,17 +84,17 @@ export class AgentOutputManager {
 			// manager only owns the first segment of whatever remains.
 			const dot = rest.indexOf(".");
 			const segment = dot === -1 ? rest : rest.slice(0, dot);
-			if (segment) this.#taken.add(segment);
+			if (segment) this.#taken.add(segment.toLowerCase());
 		}
 	}
 
 	/** Pick the first free name (base, then `base-2`, `base-3`, …) and reserve it. */
 	#allocateUnique(id: string): string {
 		let candidate = id;
-		for (let n = 2; this.#taken.has(candidate); n++) {
+		for (let n = 2; this.#taken.has(candidate.toLowerCase()) || isReservedArtifactStem(candidate); n++) {
 			candidate = `${id}-${n}`;
 		}
-		this.#taken.add(candidate);
+		this.#taken.add(candidate.toLowerCase());
 		return this.#parentPrefix ? `${this.#parentPrefix}.${candidate}` : candidate;
 	}
 
@@ -106,7 +110,7 @@ export class AgentOutputManager {
 			}
 			const dot = rest.indexOf(".");
 			const segment = dot === -1 ? rest : rest.slice(0, dot);
-			if (segment) this.#taken.add(segment);
+			if (segment) this.#taken.add(segment.toLowerCase());
 		}
 	}
 

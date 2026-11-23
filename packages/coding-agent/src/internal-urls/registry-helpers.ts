@@ -8,6 +8,8 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { isEnoent } from "@oh-my-pi/pi-utils";
 import { AgentRegistry } from "../registry/agent-registry";
+import { isAdvisorTranscriptName } from "../advisor/transcript-recorder";
+import { isCommitJournal, isSidecarDir } from "../session/oryn-artifact-sidecars";
 
 const extraArtifactsDirs = new Set<string>();
 /** Deepest nesting `sessionFilesFromDisk` descends below an artifacts dir. */
@@ -102,7 +104,7 @@ export async function sessionFilesFromDisk(
 			entries => {
 				if (!entries || depth >= MAX_SCAN_DEPTH) return;
 				for (const entry of entries) {
-					if (entry.isDirectory()) list(path.join(dir, entry.name), depth + 1);
+					if (entry.isDirectory() && !isSidecarDir(entry.name)) list(path.join(dir, entry.name), depth + 1);
 				}
 			},
 			() => {},
@@ -115,7 +117,7 @@ export async function sessionFilesFromDisk(
 	const seenDirs = new Set<string>();
 	const recordFile = (dir: string, entry: Dirent): void => {
 		if (!entry.isFile() || !entry.name.endsWith(".jsonl")) return;
-		if (entry.name.startsWith("__advisor")) return;
+		if (isAdvisorTranscriptName(entry.name)) return;
 		const id = entry.name.slice(0, -".jsonl".length);
 		const file = path.join(dir, entry.name);
 		if (options?.preserveDuplicates) {
@@ -135,9 +137,10 @@ export async function sessionFilesFromDisk(
 		if (!entries) return;
 		for (const entry of entries) {
 			if (entry.isDirectory()) {
-				await scan(path.join(dir, entry.name), depth + 1);
+				if (!isSidecarDir(entry.name)) await scan(path.join(dir, entry.name), depth + 1);
 				continue;
 			}
+			if (entry.isFile() && (await isCommitJournal(entry.name, path.join(dir, entry.name)))) continue;
 			recordFile(dir, entry);
 		}
 	};
