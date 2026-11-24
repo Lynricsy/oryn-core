@@ -3053,10 +3053,10 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 			}
 
 			case "open_session": {
-				const rawRequestedModel = await resolveRequestedRpcModel(session, command);
-				const requestedModel = await planModelController.filterRequestedModelForOpenSession(
+				const request = await planModelController.resolveOpenSessionRequest(
 					command.sessionDir,
-					rawRequestedModel,
+					{ sessionFile: session.sessionFile, isEmpty: session.messages.length === 0 },
+					{ model: await resolveRequestedRpcModel(session, command), thinkingLevel: command.thinkingLevel },
 				);
 				await stopDictationForSessionChange();
 				const fileBeforeOpen = session.sessionFile;
@@ -3064,7 +3064,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				await goalController.beginSessionChange();
 				let result: RpcOpenSessionResult | undefined;
 				try {
-					result = await openRpcSession(session, command.sessionDir, subagentRegistry, requestedModel);
+					result = await openRpcSession(session, command.sessionDir, subagentRegistry, request.apply.model);
 				} finally {
 					// Opening the session that is already open leaves a live run going (see below).
 					await goalController.endSessionChange({
@@ -3084,6 +3084,9 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					} else {
 						planApprovalController.syncArmed();
 					}
+					if (request.baseline) await planModelController.adoptOpenSessionBaseline(request.baseline);
+					else if (request.apply.thinkingLevel !== undefined)
+						session.setThinkingLevel(request.apply.thinkingLevel);
 					void settleWatcher.check();
 					await emitAvailableCommandsUpdate();
 					emitSessionInfoUpdate();

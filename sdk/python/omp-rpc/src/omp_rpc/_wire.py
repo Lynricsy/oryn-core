@@ -3878,14 +3878,16 @@ class WireClient:
             params["parentSession"] = parent_session
         return parse_cancellation_result(self._command("new_session", params), "new_session")
 
-    def open_session(self, session_dir: str | Path, *, provider: str | None = None, model_id: str | None = None) -> OpenSessionResult:
-        """Continue the newest non-empty session in a directory, or start a fresh one there. Give provider and modelId together to override the saved model; otherwise an unavailable saved model fails the request."""
+    def open_session(self, session_dir: str | Path, *, provider: str | None = None, model_id: str | None = None, thinking_level: ThinkingLevel | None = None) -> OpenSessionResult:
+        """Continue the newest non-empty session in a directory, or start a fresh one there. Give provider and modelId together to override the saved model; otherwise an unavailable saved model fails the request. Oryn: thinkingLevel sets the session thinking level; when the opened session is in plan mode on the plan model, the given model and thinkingLevel become the pre-plan baseline restored on exit instead."""
         params: dict[str, object] = {}
         params["sessionDir"] = str(session_dir)
         if provider is not None:
             params["provider"] = provider
         if model_id is not None:
             params["modelId"] = model_id
+        if thinking_level is not None:
+            params["thinkingLevel"] = thinking_level
         return parse_open_session_result(self._command("open_session", params), "open_session")
 
     def get_state(self) -> SessionState:

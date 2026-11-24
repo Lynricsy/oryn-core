@@ -79,8 +79,8 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 	},
 	{
 		name: "open_session",
-		doc: "Continue the newest non-empty session in a directory, or start a fresh one there. Give provider and modelId together to override the saved model; otherwise an unavailable saved model fails the request.",
-		params: { sessionDir: "string", "provider?": "string", "modelId?": "string" },
+		doc: "Continue the newest non-empty session in a directory, or start a fresh one there. Give provider and modelId together to override the saved model; otherwise an unavailable saved model fails the request. Oryn: thinkingLevel sets the session thinking level; when the opened session is in plan mode on the plan model, the given model and thinkingLevel become the pre-plan baseline restored on exit instead.",
+		params: { sessionDir: "string", "provider?": "string", "modelId?": "string", "thinkingLevel?": "ThinkingLevel" },
 		result: "OpenSessionResult",
 	},
 

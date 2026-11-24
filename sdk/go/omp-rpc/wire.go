@@ -8891,12 +8891,13 @@ func (c Commands) NewSession(ctx context.Context, p NewSessionCommand) (Cancella
 
 // OpenSessionCommand holds the parameters of "open_session".
 type OpenSessionCommand struct {
-	SessionDir string  `json:"sessionDir"`
-	Provider   *string `json:"provider,omitempty"`
-	ModelID    *string `json:"modelId,omitempty"`
+	SessionDir    string         `json:"sessionDir"`
+	Provider      *string        `json:"provider,omitempty"`
+	ModelID       *string        `json:"modelId,omitempty"`
+	ThinkingLevel *ThinkingLevel `json:"thinkingLevel,omitempty"`
 }
 
-// OpenSession sends "open_session": Continue the newest non-empty session in a directory, or start a fresh one there. Give provider and modelId together to override the saved model; otherwise an unavailable saved model fails the request.
+// OpenSession sends "open_session": Continue the newest non-empty session in a directory, or start a fresh one there. Give provider and modelId together to override the saved model; otherwise an unavailable saved model fails the request. Oryn: thinkingLevel sets the session thinking level; when the opened session is in plan mode on the plan model, the given model and thinkingLevel become the pre-plan baseline restored on exit instead.
 func (c Commands) OpenSession(ctx context.Context, p OpenSessionCommand) (OpenSessionResult, error) {
 	var out OpenSessionResult
 	err := c.call(ctx, "open_session", p, 0, &out)

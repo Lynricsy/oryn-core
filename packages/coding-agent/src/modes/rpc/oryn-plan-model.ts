@@ -226,6 +226,12 @@ export interface OrynPlanModelControllerDeps {
 	onWarning?: (message: string) => void;
 }
 
+/** `open_session` 随请求带来的模型与思考级别。 */
+export interface OpenSessionModelRequest {
+	model?: Model;
+	thinkingLevel?: ConfiguredThinkingLevel;
+}
+
 export class OrynPlanModelController {
 	readonly #session: OrynPlanModelSession;
 	readonly #isPlanEnabled: () => boolean;
@@ -248,23 +254,51 @@ export class OrynPlanModelController {
 	}
 
 	/**
-	 * `open_session` 前置过滤：若目标会话目录里最新会话仍处于计划模式，且传入的 `requestedModel`
-	 * 恰好等于持久化的进入前基线（如 Oryn 控制面冷重启时回传的线程常驻模型），返回 `undefined`，
-	 * 让 `openRpcSession` 保留磁盘上的计划模型，不把临时计划态冲回基线也不写多余的 `model_change`。
+	 * `open_session` 前置：Oryn 每次拉起 agent 都在 `open_session` 里带上线程常驻的模型与思考级别。
+	 * 若落地的会话处于计划模式且已切到计划模型（续接的会话文件里有 `active` 基线；或目录里只有本进程刚建的空会话、
+	 * 已被 `plan.defaultOnStartup` 带进计划模式），这两项不再立即应用——否则会把计划模型冲掉——而是返回为
+	 * `baseline`，由 {@link adoptOpenSessionBaseline} 在打开之后改作进入前基线，退出计划模式时恢复到它们。
+	 * 其余情况原样返回，照常应用。
 	 */
-	async filterRequestedModelForOpenSession(
+	async resolveOpenSessionRequest(
 		sessionDir: string,
-		requestedModel: Model | undefined,
-	): Promise<Model | undefined> {
-		if (!requestedModel || this.#session.restrictToolNames || !this.#isPlanEnabled()) return requestedModel;
+		current: { sessionFile: string | undefined; isEmpty: boolean },
+		request: OpenSessionModelRequest,
+	): Promise<{ apply: OpenSessionModelRequest; baseline?: OpenSessionModelRequest }> {
+		if (!request.model && request.thinkingLevel === undefined) return { apply: request };
+		if (this.#session.restrictToolNames || !this.#isPlanEnabled()) return { apply: request };
 		const dir = path.resolve(sessionDir);
 		const recent = await findMostRecentNonEmptySession(dir);
 		const latest = recent ? ((await findRecentSessionContinuation(recent))?.session.path ?? recent) : null;
-		if (!latest) return requestedModel;
-		return this.filterRequestedModelForSessionFile(latest, requestedModel);
+		const currentFile = current.sessionFile ? path.resolve(current.sessionFile) : undefined;
+		let intoPlan: boolean;
+		if (latest && path.resolve(latest) !== currentFile) {
+			const { mode, baseline } = readBranchPlanState(await readActiveBranchFromFile(latest));
+			intoPlan = mode === "plan" && baseline?.active === true && !!baseline.model;
+		} else if (latest || (currentFile && path.dirname(currentFile) === dir && current.isEmpty)) {
+			// 落地的就是当前会话（openRpcSession 视为已打开、不切换文件）：看内存里的计划态
+			intoPlan = this.#session.getPlanModeState()?.enabled === true && this.#previousState !== undefined;
+		} else {
+			intoPlan = false;
+		}
+		return intoPlan ? { apply: {}, baseline: request } : { apply: request };
 	}
 
-	/** `switch_session` 与 `open_session` 共用的单文件基线比对。 */
+	/**
+	 * 计划模式下把 `open_session` 请求的模型 / 思考级别改作进入前基线并落盘（见 {@link resolveOpenSessionRequest}）。
+	 * 模型变了时原来的来源记录不再适用，丢弃。
+	 */
+	async adoptOpenSessionBaseline(request: OpenSessionModelRequest): Promise<void> {
+		const prev = this.#previousState;
+		if (!prev) return;
+		const model = request.model ?? prev.model;
+		const thinkingLevel = request.thinkingLevel ?? prev.thinkingLevel;
+		const sameModel = modelsAreEqual(model, prev.model);
+		if (sameModel && thinkingLevel === prev.thinkingLevel) return;
+		this.#previousState = { model, thinkingLevel, sourceRecord: sameModel ? prev.sourceRecord : undefined };
+		await this.#persistBaselineActive(this.#previousState);
+	}
+	/** `switch_session` 的单文件基线比对：目标仍在计划模式且请求的模型就是持久基线时不覆盖计划模型。 */
 	async filterRequestedModelForSessionFile(
 		sessionFile: string,
 		requestedModel: Model | undefined,

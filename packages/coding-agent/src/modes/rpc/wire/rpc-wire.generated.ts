@@ -1784,6 +1784,7 @@ export interface OpenSessionParams {
 	sessionDir: string;
 	provider?: string;
 	modelId?: string;
+	thinkingLevel?: ThinkingLevel;
 }
 
 export interface SetFastModeParams {

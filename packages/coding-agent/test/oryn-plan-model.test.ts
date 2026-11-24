@@ -475,6 +475,52 @@ describe("RPC plan mode model switching", () => {
 		expect(st.thinkingLevel).toBe(ThinkingLevel.High);
 	});
 
+	test("fresh session: Oryn open_session model/thinking become the pre-plan baseline when plan.defaultOnStartup already entered plan mode", async () => {
+		const rpc = await start({
+			ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high",
+			ORYN_PLAN_DEFAULT_ON_STARTUP: "1",
+		});
+		const sessionDir = path.join(rpc.dir, "sessions");
+		expect((await rpc.state()).model?.id).toBe("claude-opus-4-6");
+
+		// Oryn 新线程的初始化帧：open_session 带线程常驻模型与思考级别（同一目录、全新会话）
+		const opened = await rpc.data<{ resumed: boolean }>({
+			type: "open_session",
+			sessionDir,
+			provider: "anthropic",
+			modelId: "claude-haiku-4-5",
+			thinkingLevel: "low",
+		});
+		expect(opened.resumed).toBe(false);
+		const inPlan = await rpc.state();
+		expect(inPlan.planModeEnabled).toBe(true);
+		expect(inPlan.model?.id).toBe("claude-opus-4-6");
+		expect(inPlan.thinkingLevel).toBe(ThinkingLevel.High);
+
+		// 退出计划模式恢复 Oryn 给的常驻基线，而不是进程启动时的默认模型
+		await rpc.data({ type: "set_plan_mode", enabled: false });
+		const after = await rpc.state();
+		expect(after.planModeEnabled).toBe(false);
+		expect(after.model?.id).toBe("claude-haiku-4-5");
+		expect(after.thinkingLevel).toBe(ThinkingLevel.Low);
+	});
+
+	test("open_session thinkingLevel applies to the active model outside plan mode", async () => {
+		const rpc = await start({ ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high" });
+		const sessionDir = path.join(rpc.dir, "sessions");
+		await rpc.data({
+			type: "open_session",
+			sessionDir,
+			provider: "anthropic",
+			modelId: "claude-haiku-4-5",
+			thinkingLevel: "low",
+		});
+		const st = await rpc.state();
+		expect(st.planModeEnabled).toBe(false);
+		expect(st.model?.id).toBe("claude-haiku-4-5");
+		expect(st.thinkingLevel).toBe(ThinkingLevel.Low);
+	});
+
 	test("surfaces warning and leaves pre-plan state clean when setModelTemporary fails", async () => {
 		const warnings: string[] = [];
 		const sonnet = { provider: "anthropic", id: "claude-sonnet-4-5" } as Model;

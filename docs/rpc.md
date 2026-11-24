@@ -137,7 +137,7 @@ Important edge behavior from runtime:
 - `{ id?, type: "abort_and_prompt", message: string, images?: ImageContent[] }`
 - `{ id?, type: "abort_and_restore_queue" }`
 - `{ id?, type: "new_session", parentSession?: string }`
-- `{ id?, type: "open_session", sessionDir: string, provider?: string, modelId?: string }`
+- `{ id?, type: "open_session", sessionDir: string, provider?: string, modelId?: string, thinkingLevel?: ThinkingLevel | "auto" }`
 
 ### Protocol
 
@@ -490,6 +490,8 @@ To bind with a specific model instead, pass `provider` and `modelId` together, a
 	"modelId": "claude-sonnet-4-5"
 }
 ```
+
+Oryn: `thinkingLevel` sets the session thinking level after the open, as `set_thinking_level` does. When the opened session is in plan mode on the plan model (a resumed session with an active `oryn-plan-baseline`, or a fresh session that `plan.defaultOnStartup` already put in plan mode), neither the model pair nor `thinkingLevel` is applied: they replace the pre-plan baseline instead (persisted as `oryn-plan-baseline`), and leaving plan mode restores them.
 
 ### `remove_queued_message` payload
 
