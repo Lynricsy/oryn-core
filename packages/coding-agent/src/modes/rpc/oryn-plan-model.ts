@@ -146,7 +146,22 @@ export class OrynPlanModelController {
 		if (!resolved.model) return;
 
 		const currentModel = this.#session.model;
-		const capturedHere = this.#previousState === undefined;
+		// 上一次退出在流式期间留下的挂起恢复：重入计划模式时取消它并继承其中的原始基线，
+		// 避免回合结束在计划模式里误切回原模型，也避免把当前计划模型当成新的恢复基线。
+		let inheritedRestore = false;
+		if (this.#pendingSwitch?.kind === "restore") {
+			const pending = this.#pendingSwitch;
+			this.#pendingSwitch = undefined;
+			this.#generation++;
+			this.#previousState = {
+				model: pending.model,
+				thinkingLevel: pending.thinkingLevel,
+				sourceRecord: pending.sourceRecord,
+			};
+			inheritedRestore = true;
+		}
+
+		const capturedHere = !inheritedRestore && this.#previousState === undefined;
 		if (capturedHere && currentModel) {
 			this.#previousState = {
 				model: currentModel,

@@ -307,6 +307,51 @@ describe("RPC plan mode model switching", () => {
 		expect(after.thinkingLevel).toBe(ThinkingLevel.Medium);
 	});
 
+	test("re-entering plan mode while a restore is pending cancels the restore and preserves the original baseline", async () => {
+		const rpc = await start({
+			ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high",
+			ORYN_HOLD_TURN: "1",
+		});
+
+		await rpc.data({ type: "oryn_select_model", role: "default" });
+		await rpc.data({ type: "set_plan_mode", enabled: true });
+		expect((await rpc.state()).model?.id).toBe("claude-opus-4-6");
+
+		// 在计划模型 B 上启动流式回合
+		const promptPromise = rpc.data({ type: "prompt", message: "hold turn on plan model" });
+		await rpc.waitFor(f => f.type === "agent_start");
+
+		// 流式期间关计划再重开：不得在 agent_end 切回 A，也不得把 B 当新基线
+		await rpc.data({ type: "set_plan_mode", enabled: false });
+		await rpc.data({ type: "set_plan_mode", enabled: true });
+
+		const mark = rpc.frames.length;
+		await rpc.data({ type: "prompt", message: "/oryntest-release" });
+		await promptPromise;
+		await rpc.waitForNew(f => f.type === "session_settled", mark);
+
+		const stillPlan = await rpc.state();
+		expect(stillPlan.planModeEnabled).toBe(true);
+		expect(stillPlan.model?.id).toBe("claude-opus-4-6");
+		expect(stillPlan.thinkingLevel).toBe(ThinkingLevel.High);
+
+		// 再次退出计划模式时应恢复最初进入前的原基线 A（sonnet:medium + default 来源），而不是 B
+		await rpc.data({ type: "set_plan_mode", enabled: false });
+		const after = await rpc.state();
+		expect(after.planModeEnabled).toBe(false);
+		expect(after.model?.id).toBe("claude-sonnet-4-5");
+		expect(after.thinkingLevel).toBe(ThinkingLevel.Medium);
+
+		const entries = await rpc.readSessionEntries(after.sessionFile!);
+		const sources = entries.filter(e => e.type === "custom" && e.customType === ORYN_MODEL_SOURCE_ENTRY);
+		expect(sources.at(-1)?.data).toEqual({
+			v: 1,
+			source: "role",
+			model: "anthropic/claude-sonnet-4-5",
+			role: "default",
+		});
+	});
+
 	test("restores pre-plan model on plan_approval execute (across newSession)", async () => {
 		const rpc = await start({
 			ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high",
