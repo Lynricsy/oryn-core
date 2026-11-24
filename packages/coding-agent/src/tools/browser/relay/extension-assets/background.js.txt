@@ -199,15 +199,893 @@ async function neutralizeForeignFrames(tabId) {
   return found;
 }
 
+// extension/policy.ts
+var APPROVAL_TTL_MS = 5 * 60000;
+var ONE_TIME_GRANT_TTL_MS = 5 * 60000;
+var BLOCKED_SCHEME_RE = /^(chrome|chrome-extension|devtools|edge|view-source|chrome-untrusted|chrome-search):/i;
+var SENSITIVE_CDP_METHODS = new Set([
+  "Storage.getCookies",
+  "Network.getAllCookies",
+  "Network.getCookies",
+  "Network.requestWillBeSentExtraInfo",
+  "Network.responseReceivedExtraInfo"
+]);
+function isBlockedUrl(raw) {
+  const u = raw.trim();
+  if (!u)
+    return false;
+  if (BLOCKED_SCHEME_RE.test(u))
+    return true;
+  if (/^about:/i.test(u) && u.toLowerCase() !== "about:blank")
+    return true;
+  return false;
+}
+function isFileUrl(raw) {
+  return /^file:/i.test(raw.trim());
+}
+function parseHostname(raw) {
+  try {
+    return new URL(raw).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+function registrableDomain(rawUrl) {
+  const host = parseHostname(rawUrl);
+  if (!host)
+    return "";
+  if (host === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(":")) {
+    return host;
+  }
+  const parts = host.split(".").filter(Boolean);
+  if (parts.length <= 2)
+    return host;
+  const lastTwo = parts.slice(-2).join(".");
+  const secondLevelPublic = new Set(["co.uk", "com.cn", "org.cn", "gov.cn", "net.cn", "com.hk", "com.tw", "com.au", "co.jp"]);
+  if (secondLevelPublic.has(lastTwo) && parts.length >= 3) {
+    return parts.slice(-3).join(".");
+  }
+  return lastTwo;
+}
+function normalizeUrlForFingerprint(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed)
+    return "about:blank";
+  try {
+    const u = new URL(trimmed);
+    u.hash = "";
+    return u.toString();
+  } catch {
+    return trimmed;
+  }
+}
+
+class CloudPolicyEngine {
+  #sessions = new Map;
+  #seq = 0;
+  #ensure(threadId) {
+    let s = this.#sessions.get(threadId);
+    if (!s) {
+      s = {
+        threadId,
+        sharedTabs: new Map,
+        autoApproveCreateTab: false,
+        autoApproveCategories: new Set,
+        oneTimeGrants: new Map,
+        pendingApprovals: new Map
+      };
+      this.#sessions.set(threadId, s);
+    }
+    return s;
+  }
+  #pruneExpired(s, now) {
+    for (const [fp, g] of s.oneTimeGrants) {
+      if (g.expiresAt <= now)
+        s.oneTimeGrants.delete(fp);
+    }
+    for (const [id, p] of s.pendingApprovals) {
+      if (p.expiresAt <= now)
+        s.pendingApprovals.delete(id);
+    }
+  }
+  shareTab(threadId, snap) {
+    const s = this.#ensure(threadId);
+    const rec = {
+      tabId: snap.tabId,
+      source: "shared",
+      initialHost: registrableDomain(snap.url),
+      url: snap.url,
+      title: snap.title
+    };
+    s.sharedTabs.set(snap.tabId, rec);
+    return rec;
+  }
+  registerCreatedTab(threadId, snap) {
+    const s = this.#ensure(threadId);
+    const rec = {
+      tabId: snap.tabId,
+      source: "created",
+      initialHost: registrableDomain(snap.url),
+      url: snap.url,
+      title: snap.title
+    };
+    s.sharedTabs.set(snap.tabId, rec);
+    return rec;
+  }
+  unshareTab(threadId, tabId) {
+    const s = this.#sessions.get(threadId);
+    if (!s)
+      return false;
+    return s.sharedTabs.delete(tabId);
+  }
+  updateKnownTab(threadId, snap) {
+    const s = this.#sessions.get(threadId);
+    const rec = s?.sharedTabs.get(snap.tabId);
+    if (!rec)
+      return false;
+    rec.url = snap.url;
+    rec.title = snap.title;
+    if (!rec.initialHost && snap.url) {
+      rec.initialHost = registrableDomain(snap.url);
+    }
+    return true;
+  }
+  sessionsHoldingTab(tabId) {
+    const out = [];
+    for (const [tid, s] of this.#sessions) {
+      if (s.sharedTabs.has(tabId))
+        out.push(tid);
+    }
+    return out;
+  }
+  clearSession(threadId) {
+    const s = this.#sessions.get(threadId);
+    if (!s)
+      return [];
+    const tabs = [...s.sharedTabs.keys()];
+    this.#sessions.delete(threadId);
+    return tabs;
+  }
+  clearAll() {
+    const all = new Set;
+    for (const s of this.#sessions.values()) {
+      for (const id of s.sharedTabs.keys())
+        all.add(id);
+    }
+    this.#sessions.clear();
+    return [...all];
+  }
+  filterHello(threadId, fullHello) {
+    const s = this.#sessions.get(threadId);
+    if (!s || s.sharedTabs.size === 0) {
+      return {
+        ...fullHello,
+        downloadsProtocol: undefined,
+        tabs: [],
+        attachedTabIds: []
+      };
+    }
+    const tabs = fullHello.tabs.filter((tab) => s.sharedTabs.has(tab.tabId));
+    const attachedTabIds = fullHello.attachedTabIds.filter((id) => s.sharedTabs.has(id));
+    return {
+      ...fullHello,
+      downloadsProtocol: undefined,
+      tabs,
+      attachedTabIds
+    };
+  }
+  filterTabEvent(threadId, ev) {
+    const s = this.#sessions.get(threadId);
+    if (!s)
+      return null;
+    const tabId = ev.t === "tabRemoved" ? ev.tabId : ev.tab.tabId;
+    if (!s.sharedTabs.has(tabId))
+      return null;
+    if (ev.t !== "tabRemoved") {
+      this.updateKnownTab(threadId, ev.tab);
+    }
+    return ev;
+  }
+  authorizeRpc(threadId, rpc, now = Date.now()) {
+    const s = this.#ensure(threadId);
+    this.#pruneExpired(s, now);
+    if (rpc.op === "findDownload") {
+      return { kind: "deny", reason: "Oryn cloud relay disables findDownload to avoid exposing local file paths." };
+    }
+    if (rpc.op === "createTab") {
+      const url = rpc.url ?? "";
+      if (isBlockedUrl(url)) {
+        return { kind: "deny", reason: `Blocked internal browser URL: ${url}` };
+      }
+      const isFile = isFileUrl(url);
+      const category = isFile ? "file_url" : "create_tab";
+      const fp = `${category}:${normalizeUrlForFingerprint(url)}`;
+      if (!isFile && s.autoApproveCreateTab)
+        return { kind: "allow" };
+      if (isFile && s.autoApproveCategories.has("file_url"))
+        return { kind: "allow" };
+      if (this.#consumeOneTimeGrant(s, fp, now))
+        return { kind: "allow" };
+      const summary = isFile ? `打开本地文件页面 ${url}` : `新建标签页 ${url || "about:blank"}`;
+      return this.#requireApproval(s, { category, fingerprint: fp, summary, url }, now);
+    }
+    if (rpc.op === "group" || rpc.op === "ungroup") {
+      for (const id of rpc.tabIds) {
+        if (!s.sharedTabs.has(id)) {
+          return { kind: "deny", reason: `Tab ${id} is not shared with this Oryn thread.` };
+        }
+      }
+      return { kind: "allow" };
+    }
+    const tabRec = s.sharedTabs.get(rpc.tabId);
+    if (!tabRec) {
+      return {
+        kind: "deny",
+        reason: `Tab ${rpc.tabId} is not shared with this Oryn thread. Ask the user to share it in the Chrome extension popup.`
+      };
+    }
+    if (rpc.op !== "send") {
+      return { kind: "allow" };
+    }
+    const method = rpc.method;
+    if (method.startsWith("Target.") || method.startsWith("Browser.") || method.startsWith("SystemInfo.")) {
+      const category = "browser_target_cdp";
+      const fp = `${category}:${rpc.tabId}:${method}`;
+      if (s.autoApproveCategories.has(category) || this.#consumeOneTimeGrant(s, fp, now)) {
+        return { kind: "allow" };
+      }
+      return this.#requireApproval(s, { category, fingerprint: fp, summary: `执行浏览器级 CDP 命令 ${method}`, tabId: rpc.tabId, method }, now);
+    }
+    if (SENSITIVE_CDP_METHODS.has(method)) {
+      const category = "sensitive_cdp";
+      const fp = `${category}:${rpc.tabId}:${method}`;
+      if (s.autoApproveCategories.has(category) || this.#consumeOneTimeGrant(s, fp, now)) {
+        return { kind: "allow" };
+      }
+      return this.#requireApproval(s, { category, fingerprint: fp, summary: `读取标签页凭据/请求头（${method}）`, tabId: rpc.tabId, method }, now);
+    }
+    if (method === "Page.navigate") {
+      const targetUrl = typeof rpc.params?.url === "string" ? rpc.params.url : "";
+      if (isBlockedUrl(targetUrl)) {
+        return { kind: "deny", reason: `Blocked internal browser URL: ${targetUrl}` };
+      }
+      if (isFileUrl(targetUrl)) {
+        const category = "file_url";
+        const fp = `${category}:${rpc.tabId}:${normalizeUrlForFingerprint(targetUrl)}`;
+        if (s.autoApproveCategories.has(category) || this.#consumeOneTimeGrant(s, fp, now)) {
+          return { kind: "allow" };
+        }
+        return this.#requireApproval(s, { category, fingerprint: fp, summary: `导航到本地文件 ${targetUrl}`, tabId: rpc.tabId, url: targetUrl, method }, now);
+      }
+      if (tabRec.source === "shared" && targetUrl) {
+        const nextDomain = registrableDomain(targetUrl);
+        if (tabRec.initialHost && nextDomain && nextDomain !== tabRec.initialHost) {
+          const category = "cross_origin_nav";
+          const fp = `${category}:${rpc.tabId}:${nextDomain}`;
+          if (s.autoApproveCategories.has(category) || this.#consumeOneTimeGrant(s, fp, now)) {
+            return { kind: "allow" };
+          }
+          return this.#requireApproval(s, {
+            category,
+            fingerprint: fp,
+            summary: `共享标签页跨站跳转到 ${nextDomain}（原域名 ${tabRec.initialHost}）`,
+            tabId: rpc.tabId,
+            url: targetUrl,
+            method
+          }, now);
+        }
+      }
+    }
+    return { kind: "allow" };
+  }
+  resolveApproval(threadId, approvalId, decision, now = Date.now()) {
+    const s = this.#sessions.get(threadId);
+    if (!s)
+      return null;
+    this.#pruneExpired(s, now);
+    const approval = s.pendingApprovals.get(approvalId);
+    if (!approval)
+      return null;
+    s.pendingApprovals.delete(approvalId);
+    if (decision === "approved_once") {
+      s.oneTimeGrants.set(approval.fingerprint, { expiresAt: now + ONE_TIME_GRANT_TTL_MS });
+    } else if (decision === "approved_session") {
+      if (approval.category === "create_tab") {
+        s.autoApproveCreateTab = true;
+      } else {
+        s.autoApproveCategories.add(approval.category);
+      }
+      for (const [id, p] of s.pendingApprovals) {
+        if (p.category === approval.category)
+          s.pendingApprovals.delete(id);
+      }
+    }
+    return { approval, decision };
+  }
+  setAutoApproveCreateTab(threadId, enabled) {
+    const s = this.#ensure(threadId);
+    s.autoApproveCreateTab = enabled;
+  }
+  getSummary(threadId, now = Date.now()) {
+    const s = this.#sessions.get(threadId);
+    if (!s) {
+      return {
+        threadId,
+        sharedTabs: [],
+        pendingApprovals: [],
+        autoApproveCreateTab: false,
+        autoApproveCategories: []
+      };
+    }
+    this.#pruneExpired(s, now);
+    return {
+      threadId,
+      sharedTabs: [...s.sharedTabs.values()],
+      pendingApprovals: [...s.pendingApprovals.values()],
+      autoApproveCreateTab: s.autoApproveCreateTab,
+      autoApproveCategories: [...s.autoApproveCategories]
+    };
+  }
+  totalPendingApprovals(now = Date.now()) {
+    let total = 0;
+    for (const s of this.#sessions.values()) {
+      this.#pruneExpired(s, now);
+      total += s.pendingApprovals.size;
+    }
+    return total;
+  }
+  #consumeOneTimeGrant(s, fingerprint, now) {
+    const grant = s.oneTimeGrants.get(fingerprint);
+    if (!grant)
+      return false;
+    s.oneTimeGrants.delete(fingerprint);
+    return grant.expiresAt > now;
+  }
+  #requireApproval(s, req, now) {
+    let existing;
+    for (const p of s.pendingApprovals.values()) {
+      if (p.fingerprint === req.fingerprint) {
+        existing = p;
+        break;
+      }
+    }
+    const approval = existing ?? {
+      id: `apr_${++this.#seq}_${now}`,
+      threadId: s.threadId,
+      category: req.category,
+      fingerprint: req.fingerprint,
+      summary: req.summary,
+      url: req.url,
+      tabId: req.tabId,
+      method: req.method,
+      createdAt: now,
+      expiresAt: now + APPROVAL_TTL_MS
+    };
+    if (!existing) {
+      s.pendingApprovals.set(approval.id, approval);
+    }
+    return {
+      kind: "require_approval",
+      approval,
+      errorMessage: `ORYN_APPROVAL_REQUIRED(${approval.id}): 等待用户在 Chrome 扩展中确认授权（${approval.summary}）。请暂停重复调用，等用户批准后再重试同一操作。`
+    };
+  }
+}
+
+// extension/oryn-cloud.ts
+var CLOUD_PING_MS = 20000;
+var RECONNECT_MIN_MS = 1500;
+var RECONNECT_MAX_MS = 15000;
+var CLOSE_REVOKED = 4401;
+var NOTIFICATION_ICON = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2S8AAAAASUVORK5CYII=";
+function normalizeServerUrl(raw) {
+  const trimmed = raw.trim().replace(/\/+$/, "");
+  if (!trimmed)
+    return "";
+  if (/^https?:\/\//i.test(trimmed))
+    return trimmed;
+  if (/^(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i.test(trimmed))
+    return `http://${trimmed}`;
+  return `https://${trimmed}`;
+}
+function toWebSocketUrl(baseHttpUrl, pathWithQuery) {
+  const u = new URL(pathWithQuery, `${baseHttpUrl}/`);
+  u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+  return u.toString();
+}
+async function loadCloudConfig() {
+  const stored = await chrome.storage.local.get({
+    mode: "local",
+    orynServerUrl: "",
+    orynDeviceToken: "",
+    orynDeviceId: "",
+    orynDeviceName: ""
+  });
+  return {
+    mode: stored.mode === "oryn" ? "oryn" : "local",
+    orynServerUrl: typeof stored.orynServerUrl === "string" ? stored.orynServerUrl : "",
+    orynDeviceToken: typeof stored.orynDeviceToken === "string" ? stored.orynDeviceToken : "",
+    orynDeviceId: typeof stored.orynDeviceId === "string" ? stored.orynDeviceId : "",
+    orynDeviceName: typeof stored.orynDeviceName === "string" ? stored.orynDeviceName : ""
+  };
+}
+
+class OrynCloudClient {
+  policy = new CloudPolicyEngine;
+  #host;
+  #ws = null;
+  #pingTimer = null;
+  #reconnectTimer = null;
+  #reconnectDelay = RECONNECT_MIN_MS;
+  #stopped = true;
+  #connected = false;
+  #lastError = "";
+  #config = {
+    mode: "local",
+    orynServerUrl: "",
+    orynDeviceToken: "",
+    orynDeviceId: "",
+    orynDeviceName: ""
+  };
+  #pairing = null;
+  #threads = [];
+  #openSessions = new Map;
+  constructor(host) {
+    this.#host = host;
+  }
+  get active() {
+    return !this.#stopped && this.#config.mode === "oryn";
+  }
+  async start() {
+    this.#config = await loadCloudConfig();
+    if (this.#config.mode !== "oryn") {
+      await this.stop();
+      return;
+    }
+    this.#stopped = false;
+    await this.connect();
+  }
+  async stop() {
+    this.#stopped = true;
+    this.#clearTimers();
+    if (this.#ws) {
+      const old = this.#ws;
+      this.#ws = null;
+      old.close();
+    }
+    this.#connected = false;
+    const tabIds = this.policy.clearAll();
+    this.#openSessions.clear();
+    await Promise.all(tabIds.map((id) => this.#host.detachAndUngroup(id).catch(() => {})));
+    await this.#refreshBadge();
+  }
+  async connect() {
+    if (this.#stopped || this.#config.mode !== "oryn")
+      return;
+    if (this.#ws && (this.#ws.readyState === WebSocket.OPEN || this.#ws.readyState === WebSocket.CONNECTING))
+      return;
+    const base = normalizeServerUrl(this.#config.orynServerUrl);
+    const token = this.#config.orynDeviceToken.trim();
+    if (!base || !token) {
+      this.#connected = false;
+      await this.#refreshBadge();
+      return;
+    }
+    try {
+      const ticketResp = await fetch(`${base}/api/v1/ws-ticket`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (ticketResp.status === 401 || ticketResp.status === 403) {
+        await this.#handleRevoked("设备令牌已失效或被吊销，请重新配对");
+        return;
+      }
+      if (!ticketResp.ok) {
+        throw new Error(`ws-ticket HTTP ${ticketResp.status}`);
+      }
+      const { ticket } = await ticketResp.json();
+      if (!ticket)
+        throw new Error("empty ws-ticket");
+      const wsUrl = toWebSocketUrl(base, `/api/v1/browser-relay/ws?ticket=${encodeURIComponent(ticket)}`);
+      const socket = new WebSocket(wsUrl);
+      this.#ws = socket;
+      socket.onopen = () => {
+        if (this.#ws !== socket)
+          return;
+        this.#reconnectDelay = RECONNECT_MIN_MS;
+        this.#connected = true;
+        this.#lastError = "";
+        this.#sendRegister();
+        this.#refreshBadge();
+        clearInterval(this.#pingTimer ?? undefined);
+        this.#pingTimer = setInterval(() => this.#send({ t: "ping" }), CLOUD_PING_MS);
+      };
+      socket.onmessage = (ev) => {
+        if (this.#ws !== socket || typeof ev.data !== "string")
+          return;
+        this.#handleServerMessage(ev.data);
+      };
+      socket.onclose = (ev) => {
+        if (this.#ws !== socket)
+          return;
+        this.#ws = null;
+        this.#connected = false;
+        clearInterval(this.#pingTimer ?? undefined);
+        this.#pingTimer = null;
+        if (ev.code === CLOSE_REVOKED) {
+          this.#handleRevoked("设备已被吊销，请重新配对");
+          return;
+        }
+        this.#refreshBadge();
+        if (!this.#stopped)
+          this.#scheduleReconnect();
+      };
+      socket.onerror = () => {
+        this.#lastError = "无法连接到 Oryn 服务器";
+        socket.close();
+      };
+    } catch (err) {
+      this.#connected = false;
+      this.#lastError = err instanceof Error ? err.message : String(err);
+      await this.#refreshBadge();
+      if (!this.#stopped)
+        this.#scheduleReconnect();
+    }
+  }
+  async startPairing(rawServerUrl, deviceName) {
+    const serverUrl = normalizeServerUrl(rawServerUrl);
+    if (!serverUrl)
+      throw new Error("请输入有效的 Oryn 服务器地址");
+    const name = deviceName?.trim() || "Chrome Extension";
+    const resp = await fetch(`${serverUrl}/api/v1/devices/pair/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, kind: "browser_extension", platform: "chrome" })
+    });
+    if (!resp.ok) {
+      throw new Error(`配对请求失败（HTTP ${resp.status}）`);
+    }
+    const data = await resp.json();
+    this.#pairing = {
+      serverUrl,
+      code: data.code,
+      verifier: data.verifier,
+      verifyUrl: data.verifyUrl,
+      expiresAt: data.expiresAt
+    };
+    await chrome.storage.local.set({ mode: "oryn", orynServerUrl: serverUrl });
+    this.#config = await loadCloudConfig();
+    if (data.verifyUrl) {
+      await chrome.tabs.create({ url: data.verifyUrl, active: true }).catch(() => {});
+    }
+    return this.#pairing;
+  }
+  async pollPairingOnce() {
+    if (!this.#pairing)
+      return { approved: false };
+    const p = this.#pairing;
+    if (Date.now() >= p.expiresAt) {
+      this.#pairing = null;
+      return { approved: false, expired: true };
+    }
+    const resp = await fetch(`${p.serverUrl}/api/v1/devices/pair/poll`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: p.code, verifier: p.verifier })
+    });
+    if (resp.status === 202)
+      return { approved: false };
+    if (resp.status === 404 || resp.status === 410) {
+      this.#pairing = null;
+      return { approved: false, expired: true };
+    }
+    if (!resp.ok) {
+      throw new Error(`轮询配对失败（HTTP ${resp.status}）`);
+    }
+    const data = await resp.json();
+    this.#pairing = null;
+    await chrome.storage.local.set({
+      mode: "oryn",
+      orynServerUrl: p.serverUrl,
+      orynDeviceToken: data.deviceToken,
+      orynDeviceId: data.device.id,
+      orynDeviceName: data.device.name
+    });
+    this.#config = await loadCloudConfig();
+    this.#stopped = false;
+    await this.connect();
+    return { approved: true };
+  }
+  async unpair() {
+    this.#pairing = null;
+    await this.stop();
+    await chrome.storage.local.set({
+      orynDeviceToken: "",
+      orynDeviceId: "",
+      orynDeviceName: ""
+    });
+    this.#config = await loadCloudConfig();
+    await this.#refreshBadge();
+  }
+  async bindThread(threadId) {
+    this.#send({ t: "session.bind", threadId });
+  }
+  async unbindThread(threadId) {
+    const tabs = this.policy.clearSession(threadId);
+    this.#openSessions.delete(threadId);
+    await Promise.all(tabs.map((id) => this.#host.detachAndUngroup(id).catch(() => {})));
+    this.#send({ t: "session.unbind", threadId });
+    this.#sendSessionState(threadId);
+    await this.#refreshBadge();
+  }
+  async shareTab(threadId, tabId) {
+    const snap = await this.#host.snapshotTab(tabId);
+    if (!snap)
+      throw new Error("无法读取该标签页信息");
+    this.policy.shareTab(threadId, snap);
+    if (this.#openSessions.has(threadId)) {
+      this.#sendFrame(threadId, { t: "tabCreated", tab: snap });
+    }
+    this.#sendSessionState(threadId);
+    await this.#refreshBadge();
+  }
+  async unshareTab(threadId, tabId) {
+    const removed = this.policy.unshareTab(threadId, tabId);
+    if (!removed)
+      return;
+    await this.#host.detachAndUngroup(tabId).catch(() => {});
+    if (this.#openSessions.has(threadId)) {
+      this.#sendFrame(threadId, { t: "tabRemoved", tabId });
+    }
+    this.#sendSessionState(threadId);
+    await this.#refreshBadge();
+  }
+  async resolveApproval(threadId, approvalId, decision) {
+    const res = this.policy.resolveApproval(threadId, approvalId, decision);
+    if (!res)
+      return;
+    this.#send({
+      t: "session.approval_resolved",
+      threadId,
+      approvalId,
+      decision,
+      summary: res.approval.summary
+    });
+    this.#sendSessionState(threadId);
+    await this.#refreshBadge();
+  }
+  async emergencyDisconnectAll() {
+    const openIds = [...this.#openSessions.keys()];
+    const allTabs = this.policy.clearAll();
+    this.#openSessions.clear();
+    await Promise.all(allTabs.map((id) => this.#host.detachAndUngroup(id).catch(() => {})));
+    for (const tid of openIds) {
+      this.#send({ t: "session.unbind", threadId: tid });
+    }
+    await this.#refreshBadge();
+  }
+  onTabEvent(ev) {
+    if (!this.active || !this.#connected)
+      return;
+    const tabId = ev.t === "tabRemoved" ? ev.tabId : ev.tab.tabId;
+    for (const threadId of this.#openSessions.keys()) {
+      const filtered = this.policy.filterTabEvent(threadId, ev);
+      if (!filtered)
+        continue;
+      if (ev.t === "tabRemoved") {
+        this.policy.unshareTab(threadId, tabId);
+        this.#sendSessionState(threadId);
+      }
+      this.#sendFrame(threadId, filtered);
+    }
+  }
+  onDebuggerEvent(ev) {
+    if (!this.active || !this.#connected)
+      return;
+    const holders = this.policy.sessionsHoldingTab(ev.tabId);
+    for (const threadId of holders) {
+      if (this.#openSessions.has(threadId)) {
+        this.#sendFrame(threadId, ev);
+      }
+    }
+  }
+  requestThreadsRefresh() {
+    if (this.#connected)
+      this.#send({ t: "threads.list" });
+  }
+  getPopupSnapshot() {
+    const sessions = {};
+    const pendingApprovals = [];
+    for (const tid of this.#openSessions.keys()) {
+      const sum = this.policy.getSummary(tid);
+      sessions[tid] = sum;
+      pendingApprovals.push(...sum.pendingApprovals);
+    }
+    return {
+      mode: this.#config.mode,
+      serverUrl: this.#config.orynServerUrl,
+      paired: Boolean(this.#config.orynDeviceToken),
+      deviceId: this.#config.orynDeviceId,
+      deviceName: this.#config.orynDeviceName,
+      connected: this.#connected,
+      lastError: this.#lastError,
+      pairing: this.#pairing,
+      threads: this.#threads,
+      activeThreadIds: [...this.#openSessions.keys()],
+      sessions,
+      pendingApprovals
+    };
+  }
+  async#sendRegister() {
+    const hello = await this.#host.buildFullHello();
+    this.#send({
+      t: "register",
+      instanceId: hello.instanceId ?? "",
+      browserSession: hello.browserSession ?? "",
+      browserVersion: hello.browserVersion,
+      userAgent: hello.userAgent,
+      extVersion: hello.ompVersion ?? "0.2.0"
+    });
+  }
+  async#handleServerMessage(raw) {
+    let msg;
+    try {
+      msg = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    switch (msg.t) {
+      case "pong":
+        return;
+      case "registered":
+        if (Array.isArray(msg.threads))
+          this.#threads = msg.threads;
+        return;
+      case "threads.update":
+        if (Array.isArray(msg.threads))
+          this.#threads = msg.threads;
+        return;
+      case "session.open": {
+        if (!msg.threadId)
+          return;
+        this.#openSessions.set(msg.threadId, {
+          threadTitle: msg.threadTitle ?? msg.threadId,
+          projectName: msg.projectName ?? ""
+        });
+        const fullHello = await this.#host.buildFullHello();
+        const filtered = this.policy.filterHello(msg.threadId, fullHello);
+        this.#sendFrame(msg.threadId, filtered);
+        this.#sendSessionState(msg.threadId);
+        await this.#refreshBadge();
+        return;
+      }
+      case "session.close": {
+        if (!msg.threadId)
+          return;
+        this.#openSessions.delete(msg.threadId);
+        if (msg.reason === "unbound" || msg.reason === "revoked" || msg.reason === "rebound") {
+          const tabs = this.policy.clearSession(msg.threadId);
+          await Promise.all(tabs.map((id) => this.#host.detachAndUngroup(id).catch(() => {})));
+        }
+        await this.#refreshBadge();
+        return;
+      }
+      case "session.frame": {
+        if (!msg.threadId || !msg.payload)
+          return;
+        await this.#handleRelayPayload(msg.threadId, msg.payload);
+        return;
+      }
+    }
+  }
+  async#handleRelayPayload(threadId, payload) {
+    if (payload.t === "reload" || payload.t === "pong")
+      return;
+    const decision = this.policy.authorizeRpc(threadId, payload);
+    if (decision.kind === "deny") {
+      this.#sendFrame(threadId, { t: "rpcResult", id: payload.id, ok: false, error: decision.reason });
+      return;
+    }
+    if (decision.kind === "require_approval") {
+      this.#sendFrame(threadId, { t: "rpcResult", id: payload.id, ok: false, error: decision.errorMessage });
+      this.#sendSessionState(threadId);
+      await this.#refreshBadge();
+      await this.#notifyApproval(threadId, decision.approval);
+      return;
+    }
+    try {
+      const result = await this.#host.executeRpc(payload);
+      if (payload.op === "createTab" && result && typeof result === "object" && "tab" in result) {
+        const maybeTab = result.tab;
+        if (maybeTab && typeof maybeTab === "object" && "tabId" in maybeTab && typeof maybeTab.tabId === "number") {
+          this.policy.registerCreatedTab(threadId, maybeTab);
+          this.#sendSessionState(threadId);
+        }
+      }
+      this.#sendFrame(threadId, { t: "rpcResult", id: payload.id, ok: true, result });
+    } catch (err) {
+      this.#sendFrame(threadId, {
+        t: "rpcResult",
+        id: payload.id,
+        ok: false,
+        error: err instanceof Error ? err.message : String(err)
+      });
+    }
+  }
+  async#notifyApproval(threadId, approval) {
+    const meta = this.#openSessions.get(threadId);
+    const title = `Oryn 授权请求（${meta?.threadTitle ?? threadId}）`;
+    try {
+      await chrome.notifications?.create(approval.id, {
+        type: "basic",
+        iconUrl: NOTIFICATION_ICON,
+        title,
+        message: `${approval.summary} — 点击浏览器右上角 Oryn 扩展图标确认`,
+        priority: 2
+      });
+    } catch {}
+  }
+  async#handleRevoked(reason) {
+    this.#lastError = reason;
+    await this.unpair();
+  }
+  #sendSessionState(threadId) {
+    const sum = this.policy.getSummary(threadId);
+    this.#send({
+      t: "session.state",
+      threadId,
+      sharedTabCount: sum.sharedTabs.length,
+      pendingApprovals: sum.pendingApprovals.length,
+      autoApproveCreateTab: sum.autoApproveCreateTab
+    });
+  }
+  #sendFrame(threadId, payload) {
+    this.#send({ t: "session.frame", threadId, payload });
+  }
+  #send(msg) {
+    if (this.#ws && this.#ws.readyState === WebSocket.OPEN) {
+      this.#ws.send(JSON.stringify(msg));
+    }
+  }
+  async#refreshBadge() {
+    const pending = this.policy.totalPendingApprovals();
+    if (pending > 0) {
+      await this.#host.setBadge("!", "#d97706");
+      return;
+    }
+    if (this.#connected) {
+      await this.#host.setBadge("on", "#1a7f37");
+      return;
+    }
+    await this.#host.setBadge("off", "#8b8b8b");
+  }
+  #scheduleReconnect() {
+    if (this.#reconnectTimer)
+      return;
+    const delay = this.#reconnectDelay;
+    this.#reconnectDelay = Math.min(this.#reconnectDelay * 2, RECONNECT_MAX_MS);
+    this.#reconnectTimer = setTimeout(() => {
+      this.#reconnectTimer = null;
+      this.connect();
+    }, delay);
+  }
+  #clearTimers() {
+    clearInterval(this.#pingTimer ?? undefined);
+    this.#pingTimer = null;
+    clearTimeout(this.#reconnectTimer ?? undefined);
+    this.#reconnectTimer = null;
+  }
+}
+
 // extension/background.ts
 var DEFAULT_PORT = 9224;
 var PING_INTERVAL_MS = 20000;
-var RECONNECT_MIN_MS = 1000;
-var RECONNECT_MAX_MS = 1e4;
+var RECONNECT_MIN_MS2 = 1000;
+var RECONNECT_MAX_MS2 = 1e4;
 var REMOVE_TAB_ATTEMPTS = 3;
 var REMOVE_TAB_RETRY_MS = 500;
 var ws = null;
-var reconnectDelay = RECONNECT_MIN_MS;
+var reconnectDelay = RECONNECT_MIN_MS2;
 var pingTimer = null;
 var relayInitiatedDetachTabs = new Set;
 var instanceId = null;
@@ -335,11 +1213,14 @@ async function removeTab(tabId) {
     }
   }
 }
-async function setBadge(connected) {
+async function setBadgeRaw(text, color) {
   try {
-    await chrome.action.setBadgeText({ text: connected ? "on" : "off" });
-    await chrome.action.setBadgeBackgroundColor({ color: connected ? "#1a7f37" : "#8b8b8b" });
+    await chrome.action.setBadgeText({ text });
+    await chrome.action.setBadgeBackgroundColor({ color });
   } catch {}
+}
+async function setBadge(connected) {
+  await setBadgeRaw(connected ? "on" : "off", connected ? "#1a7f37" : "#8b8b8b");
 }
 async function buildHello() {
   const [tabs, targets] = await Promise.all([chrome.tabs.query({}), chrome.debugger.getTargets()]);
@@ -390,7 +1271,7 @@ async function runRpc(msg, origin) {
       const snap = snapshot(tab);
       if (!snap)
         throw new Error("created tab has no id");
-      if (origin.readyState !== WebSocket.OPEN)
+      if (origin && origin.readyState !== WebSocket.OPEN)
         removeTab(snap.tabId).catch(() => {});
       return { tab: snap };
     }
@@ -443,10 +1324,43 @@ function handleRelayMessage(socket, raw) {
 }
 function scheduleReconnect() {
   const delay = reconnectDelay;
-  reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
+  reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS2);
   setTimeout(() => void connect(), delay);
 }
+var cloud = new OrynCloudClient({
+  buildFullHello: () => buildHello(),
+  executeRpc: (rpc) => runRpc({ t: "rpc", id: 0, ...rpc }, null),
+  detachAndUngroup: async (tabId) => {
+    relayInitiatedDetachTabs.add(tabId);
+    await chrome.debugger.detach({ tabId }).catch(() => {
+      relayInitiatedDetachTabs.delete(tabId);
+    });
+    await chrome.tabs.ungroup([tabId]).catch(() => {});
+  },
+  snapshotTab: async (tabId) => {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      return snapshot(tab);
+    } catch {
+      return null;
+    }
+  },
+  setBadge: setBadgeRaw
+});
 async function connect() {
+  const cloudCfg = await loadCloudConfig();
+  if (cloudCfg.mode === "oryn") {
+    if (ws) {
+      const old = ws;
+      ws = null;
+      old.close();
+    }
+    clearInterval(pingTimer ?? undefined);
+    pingTimer = null;
+    await cloud.start();
+    return;
+  }
+  await cloud.stop();
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING))
     return;
   const settings = await loadSettings();
@@ -454,7 +1368,7 @@ async function connect() {
   const socket = new WebSocket(url);
   ws = socket;
   socket.onopen = () => {
-    reconnectDelay = RECONNECT_MIN_MS;
+    reconnectDelay = RECONNECT_MIN_MS2;
     setBadge(true);
     buildHello().then((hello) => post(hello));
     clearInterval(pingTimer ?? undefined);
@@ -468,10 +1382,8 @@ async function connect() {
     if (ws !== socket)
       return;
     ws = null;
-    if (pingTimer !== null) {
-      clearInterval(pingTimer);
-      pingTimer = null;
-    }
+    clearInterval(pingTimer ?? undefined);
+    pingTimer = null;
     setBadge(false);
     restoreGroups();
     scheduleReconnect();
@@ -493,34 +1405,137 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
   if (method === "Page.downloadWillBegin" && typeof params?.guid === "string" && typeof params.url === "string") {
     downloads.report(params.guid, params.url);
   }
-  post({ t: "cdpEvent", tabId: source.tabId, sessionId: source.sessionId, method, params });
+  const ev = {
+    t: "cdpEvent",
+    tabId: source.tabId,
+    sessionId: source.sessionId,
+    method,
+    params
+  };
+  if (cloud.active) {
+    cloud.onDebuggerEvent(ev);
+    return;
+  }
+  post(ev);
 });
 chrome.debugger.onDetach.addListener((source, reason) => {
   if (source.tabId === undefined)
     return;
   const relayInitiated = relayInitiatedDetachTabs.delete(source.tabId);
-  post({ t: "detached", tabId: source.tabId, reason, relayInitiated });
+  const ev = {
+    t: "detached",
+    tabId: source.tabId,
+    reason,
+    relayInitiated
+  };
+  if (cloud.active) {
+    cloud.onDebuggerEvent(ev);
+    return;
+  }
+  post(ev);
 });
-onForeignFramesHidden((tabId, frames) => post({ t: "framesHidden", tabId, frames }));
+onForeignFramesHidden((tabId, frames) => {
+  const ev = { t: "framesHidden", tabId, frames };
+  if (cloud.active) {
+    cloud.onDebuggerEvent(ev);
+    return;
+  }
+  post(ev);
+});
 chrome.tabs.onCreated.addListener((tab) => {
   const snap = snapshot(tab);
-  if (snap)
-    post({ t: "tabCreated", tab: snap });
+  if (!snap)
+    return;
+  if (cloud.active) {
+    cloud.onTabEvent({ t: "tabCreated", tab: snap });
+    return;
+  }
+  post({ t: "tabCreated", tab: snap });
 });
 chrome.tabs.onUpdated.addListener((_tabId, _changeInfo, tab) => {
   const snap = snapshot(tab);
-  if (snap)
-    post({ t: "tabUpdated", tab: snap });
+  if (!snap)
+    return;
+  if (cloud.active) {
+    cloud.onTabEvent({ t: "tabUpdated", tab: snap });
+    return;
+  }
+  post({ t: "tabUpdated", tab: snap });
 });
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   chrome.tabs.get(tabId).then((tab) => {
     const snap = snapshot(tab);
-    if (snap)
-      post({ t: "tabUpdated", tab: snap });
+    if (!snap)
+      return;
+    if (cloud.active) {
+      cloud.onTabEvent({ t: "tabUpdated", tab: snap });
+      return;
+    }
+    post({ t: "tabUpdated", tab: snap });
   }).catch(() => {});
 });
 chrome.tabs.onRemoved.addListener((tabId) => {
+  if (cloud.active) {
+    cloud.onTabEvent({ t: "tabRemoved", tabId });
+    return;
+  }
   post({ t: "tabRemoved", tabId });
+});
+chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
+  if (!raw || typeof raw !== "object" || !("t" in raw) || typeof raw.t !== "string")
+    return;
+  const msg = raw;
+  const handle = async () => {
+    switch (msg.t) {
+      case "popup.getState": {
+        cloud.requestThreadsRefresh();
+        const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const currentTab = activeTab && activeTab.id !== undefined ? { tabId: activeTab.id, title: activeTab.title ?? "", url: activeTab.url ?? activeTab.pendingUrl ?? "" } : null;
+        return {
+          cloud: cloud.getPopupSnapshot(),
+          localConnected: ws?.readyState === WebSocket.OPEN,
+          currentTab
+        };
+      }
+      case "popup.startPairing":
+        try {
+          const pairing = await cloud.startPairing(String(msg.serverUrl ?? ""), String(msg.deviceName ?? ""));
+          return { ok: true, pairing };
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      case "popup.pollPairing":
+        return await cloud.pollPairingOnce();
+      case "popup.unpair":
+        await cloud.unpair();
+        return { ok: true };
+      case "popup.bindThread":
+        await cloud.bindThread(String(msg.threadId ?? ""));
+        return { ok: true };
+      case "popup.unbindThread":
+        await cloud.unbindThread(String(msg.threadId ?? ""));
+        return { ok: true };
+      case "popup.shareTab":
+        await cloud.shareTab(String(msg.threadId ?? ""), Number(msg.tabId));
+        return { ok: true };
+      case "popup.unshareTab":
+        await cloud.unshareTab(String(msg.threadId ?? ""), Number(msg.tabId));
+        return { ok: true };
+      case "popup.resolveApproval":
+        await cloud.resolveApproval(String(msg.threadId ?? ""), String(msg.approvalId ?? ""), msg.decision);
+        return { ok: true };
+      case "popup.emergencyDisconnect":
+        await cloud.emergencyDisconnectAll();
+        return { ok: true };
+      case "popup.refreshThreads":
+        cloud.requestThreadsRefresh();
+        return { ok: true };
+      default:
+        return { ok: false, error: "unknown message" };
+    }
+  };
+  handle().then(sendResponse);
+  return true;
 });
 chrome.alarms.create("omp-relay-keepalive", { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -533,7 +1548,6 @@ chrome.storage.onChanged.addListener((_changes, areaName) => {
   ws?.close();
   connect();
 });
-chrome.action.onClicked.addListener(() => void chrome.runtime.openOptionsPage());
 chrome.runtime.onInstalled.addListener(() => void connect());
 chrome.runtime.onStartup.addListener(() => void connect());
 connect();

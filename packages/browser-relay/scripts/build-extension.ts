@@ -27,7 +27,7 @@ await fs.rm(dist, { recursive: true, force: true });
 await fs.mkdir(distExtension, { recursive: true });
 
 const bundle = await Bun.build({
-	entrypoints: [path.join(root, "extension/background.ts")],
+	entrypoints: [path.join(root, "extension/background.ts"), path.join(root, "extension/popup.ts")],
 	outdir: distExtension,
 	target: "browser",
 	sourcemap: "none",
@@ -37,7 +37,7 @@ if (!bundle.success) {
 	process.exit(1);
 }
 
-for (const file of ["options.html", "options.js"]) {
+for (const file of ["options.html", "options.js", "popup.html"]) {
 	await Bun.write(path.join(distExtension, file), Bun.file(path.join(root, "extension", file)));
 }
 await Bun.write(path.join(distExtension, "LICENSE"), Bun.file(path.join(repoRoot, "LICENSE")));
@@ -52,19 +52,23 @@ await Bun.write(
 	path.join(distExtension, "manifest.json"),
 	stampRelayExtensionManifest(await Bun.file(sourceManifest).text(), ompVersion),
 );
-
-const zip = await $`zip -qr ../omp-browser-relay-extension.zip .`.cwd(distExtension).nothrow();
+const zipOut = path.join(dist, "omp-browser-relay-extension.zip");
+const zip = await $`zip -qr ${zipOut} .`.cwd(distExtension).nothrow();
 if (zip.exitCode !== 0) {
-	console.error("zip failed:", zip.stderr.toString());
-	process.exit(1);
+	const pyZip =
+		await $`python3 -c "import os,sys,zipfile; z=zipfile.ZipFile(sys.argv[1],'w',zipfile.ZIP_DEFLATED); [z.write(os.path.join(r,f), os.path.relpath(os.path.join(r,f), sys.argv[2])) for r,_,fs in os.walk(sys.argv[2]) for f in sorted(fs)]; z.close()" ${zipOut} ${distExtension}`.nothrow();
+	if (pyZip.exitCode !== 0) {
+		console.error("zip failed:", zip.stderr.toString(), pyZip.stderr.toString());
+		process.exit(1);
+	}
 }
-
-await fs.rm(assetsDir, { recursive: true, force: true });
 await Bun.write(path.join(assetsDir, "background.js.txt"), unstampedScript);
 const embeddedAssets = [
 	[sourceManifest, "manifest.json.txt"],
 	[path.join(distExtension, "options.html"), "options.html.txt"],
 	[path.join(distExtension, "options.js"), "options.js.txt"],
+	[path.join(distExtension, "popup.html"), "popup.html.txt"],
+	[path.join(distExtension, "popup.js"), "popup.js.txt"],
 	[path.join(distExtension, "LICENSE"), "LICENSE.txt"],
 ] as const;
 for (const [source, destination] of embeddedAssets) {

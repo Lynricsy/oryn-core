@@ -87,7 +87,7 @@ declare const chrome: {
 		openOrClosedShadowRoot(element: ChromePageElement): ChromePageRoot | null;
 	};
 	tabs: {
-		query(queryInfo: { url?: string; groupId?: number }): Promise<ChromeTab[]>;
+		query(queryInfo: { url?: string; groupId?: number; active?: boolean; currentWindow?: boolean }): Promise<ChromeTab[]>;
 		get(tabId: number): Promise<ChromeTab>;
 		create(createProperties: { url?: string; active?: boolean }): Promise<ChromeTab>;
 		remove(tabId: number): Promise<void>;
@@ -145,10 +145,24 @@ declare const chrome: {
 		setBadgeBackgroundColor(details: { color: string }): Promise<void>;
 		onClicked: ChromeEvent<(tab: ChromeTab) => void>;
 	};
+	notifications?: {
+		create(
+			notificationId: string,
+			options: { type: "basic"; iconUrl: string; title: string; message: string; priority?: number },
+		): Promise<string>;
+	};
 	runtime: {
 		reload(): void;
 		readonly id: string;
 		openOptionsPage(): Promise<void>;
+		sendMessage<T = unknown>(message: unknown): Promise<T>;
+		onMessage: ChromeEvent<
+			(
+				message: unknown,
+				sender: unknown,
+				sendResponse: (response?: unknown) => void,
+			) => boolean | void
+		>;
 		onInstalled: ChromeEvent<() => void>;
 		onStartup: ChromeEvent<() => void>;
 	};

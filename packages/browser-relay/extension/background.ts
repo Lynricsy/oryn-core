@@ -20,6 +20,8 @@ import {
 import { ownedDebuggerTabs } from "./debugger-ownership";
 import { DownloadPairing } from "./download-pairing";
 import { onForeignFramesHidden, pastForeignFrames } from "./foreign-frames";
+import { loadCloudConfig, OrynCloudClient } from "./oryn-cloud";
+import type { ApprovalDecision } from "./policy";
 
 const DEFAULT_PORT = 9224;
 const PING_INTERVAL_MS = 20_000;
@@ -195,13 +197,17 @@ async function removeTab(tabId: number): Promise<void> {
 	}
 }
 
-async function setBadge(connected: boolean): Promise<void> {
+async function setBadgeRaw(text: string, color: string): Promise<void> {
 	try {
-		await chrome.action.setBadgeText({ text: connected ? "on" : "off" });
-		await chrome.action.setBadgeBackgroundColor({ color: connected ? "#1a7f37" : "#8b8b8b" });
+		await chrome.action.setBadgeText({ text });
+		await chrome.action.setBadgeBackgroundColor({ color });
 	} catch {
 		// Badge is cosmetic; never let it break the relay loop.
 	}
+}
+
+async function setBadge(connected: boolean): Promise<void> {
+	await setBadgeRaw(connected ? "on" : "off", connected ? "#1a7f37" : "#8b8b8b");
 }
 
 async function buildHello(): Promise<ExtToRelayMessage> {
@@ -234,7 +240,7 @@ async function buildHello(): Promise<ExtToRelayMessage> {
 }
 
 /** Run one relay RPC; `origin` is the socket it came in on, which alone can carry its answer. */
-async function runRpc(msg: Extract<RelayToExtMessage, { t: "rpc" }>, origin: WebSocket): Promise<unknown> {
+async function runRpc(msg: Extract<RelayToExtMessage, { t: "rpc" }>, origin: WebSocket | null): Promise<unknown> {
 	switch (msg.op) {
 		case "attach": {
 			const attach = () => chrome.debugger.attach({ tabId: msg.tabId }, "1.3");
@@ -264,7 +270,7 @@ async function runRpc(msg: Extract<RelayToExtMessage, { t: "rpc" }>, origin: Web
 			const snap = snapshot(tab);
 			if (!snap) throw new Error("created tab has no id");
 			// The relay failed this call when its socket closed, so nobody learns this tab's id to close it later.
-			if (origin.readyState !== WebSocket.OPEN) void removeTab(snap.tabId).catch(() => {});
+			if (origin && origin.readyState !== WebSocket.OPEN) void removeTab(snap.tabId).catch(() => {});
 			return { tab: snap };
 		}
 		case "removeTab":
@@ -324,7 +330,41 @@ function scheduleReconnect(): void {
 	setTimeout(() => void connect(), delay);
 }
 
+const cloud = new OrynCloudClient({
+	buildFullHello: () => buildHello() as Promise<Extract<ExtToRelayMessage, { t: "hello" }>>,
+	executeRpc: rpc => runRpc({ t: "rpc", id: 0, ...rpc }, null),
+	detachAndUngroup: async tabId => {
+		relayInitiatedDetachTabs.add(tabId);
+		await chrome.debugger.detach({ tabId }).catch(() => {
+			relayInitiatedDetachTabs.delete(tabId);
+		});
+		await chrome.tabs.ungroup([tabId]).catch(() => {});
+	},
+	snapshotTab: async tabId => {
+		try {
+			const tab = await chrome.tabs.get(tabId);
+			return snapshot(tab);
+		} catch {
+			return null;
+		}
+	},
+	setBadge: setBadgeRaw,
+});
+
 async function connect(): Promise<void> {
+	const cloudCfg = await loadCloudConfig();
+	if (cloudCfg.mode === "oryn") {
+		if (ws) {
+			const old = ws;
+			ws = null;
+			old.close();
+		}
+		clearInterval(pingTimer ?? undefined);
+		pingTimer = null;
+		await cloud.start();
+		return;
+	}
+	await cloud.stop();
 	if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 	const settings = await loadSettings();
 	const url = `ws://127.0.0.1:${settings.port}/ext${settings.token ? `?token=${encodeURIComponent(settings.token)}` : ""}`;
@@ -343,10 +383,8 @@ async function connect(): Promise<void> {
 	socket.onclose = () => {
 		if (ws !== socket) return;
 		ws = null;
-		if (pingTimer !== null) {
-			clearInterval(pingTimer);
-			pingTimer = null;
-		}
+		clearInterval(pingTimer ?? undefined);
+		pingTimer = null;
 		void setBadge(false);
 		void restoreGroups();
 		scheduleReconnect();
@@ -376,38 +414,150 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
 	if (method === "Page.downloadWillBegin" && typeof params?.guid === "string" && typeof params.url === "string") {
 		downloads.report(params.guid, params.url);
 	}
-	post({ t: "cdpEvent", tabId: source.tabId, sessionId: source.sessionId, method, params });
+	const ev: Extract<ExtToRelayMessage, { t: "cdpEvent" }> = {
+		t: "cdpEvent",
+		tabId: source.tabId,
+		sessionId: source.sessionId,
+		method,
+		params,
+	};
+	if (cloud.active) {
+		cloud.onDebuggerEvent(ev);
+		return;
+	}
+	post(ev);
 });
 
 chrome.debugger.onDetach.addListener((source, reason) => {
 	if (source.tabId === undefined) return;
 	const relayInitiated = relayInitiatedDetachTabs.delete(source.tabId);
-	post({ t: "detached", tabId: source.tabId, reason, relayInitiated });
+	const ev: Extract<ExtToRelayMessage, { t: "detached" }> = {
+		t: "detached",
+		tabId: source.tabId,
+		reason,
+		relayInitiated,
+	};
+	if (cloud.active) {
+		cloud.onDebuggerEvent(ev);
+		return;
+	}
+	post(ev);
 });
 
-onForeignFramesHidden((tabId, frames) => post({ t: "framesHidden", tabId, frames }));
+onForeignFramesHidden((tabId, frames) => {
+	const ev: Extract<ExtToRelayMessage, { t: "framesHidden" }> = { t: "framesHidden", tabId, frames };
+	if (cloud.active) {
+		cloud.onDebuggerEvent(ev);
+		return;
+	}
+	post(ev);
+});
 
 chrome.tabs.onCreated.addListener(tab => {
 	const snap = snapshot(tab);
-	if (snap) post({ t: "tabCreated", tab: snap });
+	if (!snap) return;
+	if (cloud.active) {
+		cloud.onTabEvent({ t: "tabCreated", tab: snap });
+		return;
+	}
+	post({ t: "tabCreated", tab: snap });
 });
 
 chrome.tabs.onUpdated.addListener((_tabId, _changeInfo, tab) => {
 	const snap = snapshot(tab);
-	if (snap) post({ t: "tabUpdated", tab: snap });
+	if (!snap) return;
+	if (cloud.active) {
+		cloud.onTabEvent({ t: "tabUpdated", tab: snap });
+		return;
+	}
+	post({ t: "tabUpdated", tab: snap });
 });
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
 	void chrome.tabs.get(tabId).then(tab => {
 		const snap = snapshot(tab);
-		if (snap) post({ t: "tabUpdated", tab: snap });
+		if (!snap) return;
+		if (cloud.active) {
+			cloud.onTabEvent({ t: "tabUpdated", tab: snap });
+			return;
+		}
+		post({ t: "tabUpdated", tab: snap });
 	}).catch(() => {
 		// The tab may have closed before Chrome answered.
 	});
 });
 
 chrome.tabs.onRemoved.addListener(tabId => {
+	if (cloud.active) {
+		cloud.onTabEvent({ t: "tabRemoved", tabId });
+		return;
+	}
 	post({ t: "tabRemoved", tabId });
+});
+
+// ---- popup messaging ----------------------------------------------------------
+
+chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
+	if (!raw || typeof raw !== "object" || !("t" in raw) || typeof raw.t !== "string") return;
+	const msg = raw as Record<string, unknown>;
+	const handle = async (): Promise<unknown> => {
+		switch (msg.t) {
+			case "popup.getState": {
+				cloud.requestThreadsRefresh();
+				const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+				const currentTab =
+					activeTab && activeTab.id !== undefined
+						? { tabId: activeTab.id, title: activeTab.title ?? "", url: activeTab.url ?? activeTab.pendingUrl ?? "" }
+						: null;
+				return {
+					cloud: cloud.getPopupSnapshot(),
+					localConnected: ws?.readyState === WebSocket.OPEN,
+					currentTab,
+				};
+			}
+			case "popup.startPairing":
+				try {
+					const pairing = await cloud.startPairing(String(msg.serverUrl ?? ""), String(msg.deviceName ?? ""));
+					return { ok: true, pairing };
+				} catch (err) {
+					return { ok: false, error: err instanceof Error ? err.message : String(err) };
+				}
+			case "popup.pollPairing":
+				return await cloud.pollPairingOnce();
+			case "popup.unpair":
+				await cloud.unpair();
+				return { ok: true };
+			case "popup.bindThread":
+				await cloud.bindThread(String(msg.threadId ?? ""));
+				return { ok: true };
+			case "popup.unbindThread":
+				await cloud.unbindThread(String(msg.threadId ?? ""));
+				return { ok: true };
+			case "popup.shareTab":
+				await cloud.shareTab(String(msg.threadId ?? ""), Number(msg.tabId));
+				return { ok: true };
+			case "popup.unshareTab":
+				await cloud.unshareTab(String(msg.threadId ?? ""), Number(msg.tabId));
+				return { ok: true };
+			case "popup.resolveApproval":
+				await cloud.resolveApproval(
+					String(msg.threadId ?? ""),
+					String(msg.approvalId ?? ""),
+					msg.decision as ApprovalDecision,
+				);
+				return { ok: true };
+			case "popup.emergencyDisconnect":
+				await cloud.emergencyDisconnectAll();
+				return { ok: true };
+			case "popup.refreshThreads":
+				cloud.requestThreadsRefresh();
+				return { ok: true };
+			default:
+				return { ok: false, error: "unknown message" };
+		}
+	};
+	void handle().then(sendResponse);
+	return true;
 });
 
 // ---- lifecycle ----------------------------------------------------------------
@@ -419,12 +569,11 @@ chrome.alarms.onAlarm.addListener(alarm => {
 
 chrome.storage.onChanged.addListener((_changes, areaName) => {
 	if (areaName !== "local") return;
-	// Settings changed: drop the current connection and re-dial with new ones.
+	// Settings changed: drop local connection and re-evaluate mode.
 	ws?.close();
 	void connect();
 });
 
-chrome.action.onClicked.addListener(() => void chrome.runtime.openOptionsPage());
 chrome.runtime.onInstalled.addListener(() => void connect());
 chrome.runtime.onStartup.addListener(() => void connect());
 
