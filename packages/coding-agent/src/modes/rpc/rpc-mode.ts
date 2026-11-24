@@ -2067,6 +2067,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 		: undefined;
 	const planModelController = new OrynPlanModelController({
 		session,
+		isPlanEnabled: () => cfgPlanEnabled.get(session.settings),
 		onWarning: message => output({ type: "notice", level: "warning", message, source: "plan-mode" }),
 	});
 	const planApprovalController = new RpcPlanApprovalController({
@@ -2498,8 +2499,8 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				output({ type: "config_update", model: session.model, thinkingLevel: session.thinkingLevel });
 			});
 		}
-		// A resumed session may already carry plan mode from the journal.
-		planApprovalController.syncArmed();
+		// A resumed session may already carry plan mode (and persisted pre-plan baseline) from the journal.
+		await planModelController.reconcileAfterSessionOpen(() => planApprovalController.syncArmed());
 
 		// Mirror print-mode's startup arming, minus the abort-after-proposal hook.
 		if (
@@ -2945,8 +2946,12 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				if (command.type === "branch" && (session.isCompacting || session.isBackgroundCompacting)) {
 					return error(id, "branch", new SessionBusyError("branch the session").message, "session_busy");
 				}
-				const requestedModel =
+				const rawRequestedModel =
 					command.type === "switch_session" ? await resolveRequestedRpcModel(session, command) : undefined;
+				const requestedModel =
+					command.type === "switch_session"
+						? await planModelController.filterRequestedModelForSessionFile(command.sessionPath, rawRequestedModel)
+						: undefined;
 				// Validation first: a refused change must not cancel the running side question.
 				await stopDictationForSessionChange();
 				await btw.close();
@@ -2967,7 +2972,6 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					await goalController.settled();
 				}
 				if (!result.data.cancelled) {
-					planModelController.reset();
 					inputGate.commitSessionChange(command);
 					// `branch` leaves a live run streaming to its normal yield; new/switch detach it.
 					if (command.type !== "branch" && command.type !== "fork") promptResults.abortOpen();
@@ -2975,8 +2979,10 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					void settleWatcher.check();
 					await emitAvailableCommandsUpdate();
 					emitSessionInfoUpdate();
+					await planModelController.reconcileAfterSessionOpen(() => planApprovalController.syncArmed());
+				} else {
+					planApprovalController.syncArmed();
 				}
-				planApprovalController.syncArmed();
 				return success(id, result.type, result.data);
 			}
 
@@ -3047,7 +3053,11 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 			}
 
 			case "open_session": {
-				const requestedModel = await resolveRequestedRpcModel(session, command);
+				const rawRequestedModel = await resolveRequestedRpcModel(session, command);
+				const requestedModel = await planModelController.filterRequestedModelForOpenSession(
+					command.sessionDir,
+					rawRequestedModel,
+				);
 				await stopDictationForSessionChange();
 				const fileBeforeOpen = session.sessionFile;
 				await btw.close();
@@ -3068,13 +3078,18 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					// Opening the session that is already open switches nothing and leaves a live run
 					// going. Any real open (switch or new) changes the file, even when an aliased path
 					// reopens a transcript with the same id.
-					if (session.sessionFile !== fileBeforeOpen) promptResults.abortOpen();
-					if (session.sessionFile !== fileBeforeOpen) planModelController.reset();
+					if (session.sessionFile !== fileBeforeOpen) {
+						promptResults.abortOpen();
+						await planModelController.reconcileAfterSessionOpen(() => planApprovalController.syncArmed());
+					} else {
+						planApprovalController.syncArmed();
+					}
 					void settleWatcher.check();
 					await emitAvailableCommandsUpdate();
 					emitSessionInfoUpdate();
+				} else {
+					planApprovalController.syncArmed();
 				}
-				planApprovalController.syncArmed();
 				return success(id, "open_session", result);
 			}
 
@@ -4896,8 +4911,16 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 						enabled: true,
 						planFilePath: "local://PLAN.md",
 					});
+					if (!wasEnabled) {
+						session.sessionManager.appendModeChange("plan", { planFilePath: "local://PLAN.md" });
+						await session.sessionManager.ensureOnDisk();
+					}
 				} else {
 					session.setPlanModeState(undefined);
+					if (wasEnabled) {
+						session.sessionManager.appendModeChange("none");
+						await session.sessionManager.ensureOnDisk();
+					}
 				}
 				planApprovalController.syncArmed();
 				if (command.enabled && !wasEnabled) {

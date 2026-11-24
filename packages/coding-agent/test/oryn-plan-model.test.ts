@@ -139,6 +139,12 @@ async function start(env: Record<string, string> = {}): Promise<FixtureRpc> {
 	return rpc;
 }
 
+function startIn(directory: string, env: Record<string, string> = {}): FixtureRpc {
+	const rpc = new FixtureRpc(directory, env);
+	active.push(rpc);
+	return rpc;
+}
+
 afterEach(async () => {
 	for (const rpc of active.splice(0)) rpc.stop();
 	for (const directory of directories.splice(0)) await removeWithRetries(directory);
@@ -496,5 +502,95 @@ describe("RPC plan mode model switching", () => {
 		// 退出时不应再尝试恢复不存在的切换
 		await controller.onExitPlanMode();
 		expect(warnings).toHaveLength(1);
+	});
+
+	test("persists plan mode and baseline across restart: continue in plan mode, then exit restores original model A", async () => {
+		const env = {
+			ORYN_SLOW_ROLE: "anthropic/claude-opus-4-6:high",
+			ORYN_PLAN_ROLE: "@slow",
+		};
+		const rpc1 = await start(env);
+		const sessionDir = path.join(rpc1.dir, "sessions");
+
+		// 在常驻模型 A 上建立来源记录并跑一轮，确保会话文件非空可被 open_session 恢复
+		await rpc1.data({ type: "oryn_select_model", role: "default" });
+		const firstDone = rpc1.waitFor(f => f.type === "agent_end");
+		await rpc1.data({ type: "prompt", message: "hello before plan" });
+		await firstDone;
+
+		// 进入计划模式 → 切到计划模型 B（opus:high）
+		await rpc1.data({ type: "set_plan_mode", enabled: true });
+		const inPlan1 = await rpc1.state();
+		expect(inPlan1.planModeEnabled).toBe(true);
+		expect(inPlan1.model?.id).toBe("claude-opus-4-6");
+		expect(inPlan1.thinkingLevel).toBe(ThinkingLevel.High);
+		rpc1.stop();
+
+		// 重启进程 2：无显式模型 open_session → 恢复计划模式与模型 B，继续对话仍在 B
+		const rpc2 = startIn(rpc1.dir, env);
+		await rpc2.data({ type: "open_session", sessionDir });
+		const afterRestart = await rpc2.state();
+		expect(afterRestart.planModeEnabled).toBe(true);
+		expect(afterRestart.model?.id).toBe("claude-opus-4-6");
+		expect(afterRestart.thinkingLevel).toBe(ThinkingLevel.High);
+
+		// 在重启后的进程里继续一轮计划对话，模型仍保持 B
+		const secondDone = rpc2.waitFor(f => f.type === "agent_end");
+		await rpc2.data({ type: "prompt", message: "continue planning after restart" });
+		await secondDone;
+		expect((await rpc2.state()).model?.id).toBe("claude-opus-4-6");
+
+		// 退出计划模式 → 恢复最初的原基线 A（sonnet:medium + role:default），而非留在 B
+		await rpc2.data({ type: "set_plan_mode", enabled: false });
+		const afterExit = await rpc2.state();
+		expect(afterExit.planModeEnabled).toBe(false);
+		expect(afterExit.model?.id).toBe("claude-sonnet-4-5");
+		expect(afterExit.thinkingLevel).toBe(ThinkingLevel.Medium);
+
+		const entries = await rpc2.readSessionEntries(afterExit.sessionFile!);
+		const sources = entries.filter(e => e.type === "custom" && e.customType === ORYN_MODEL_SOURCE_ENTRY);
+		expect(sources.at(-1)?.data).toEqual({
+			v: 1,
+			source: "role",
+			model: "anthropic/claude-sonnet-4-5",
+			role: "default",
+		});
+	});
+
+	test("open_session with Oryn persistent baseline model A keeps active plan model B and still restores A on exit", async () => {
+		const env = {
+			ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high",
+		};
+		const rpc1 = await start(env);
+		const sessionDir = path.join(rpc1.dir, "sessions");
+
+		await rpc1.data({ type: "oryn_select_model", role: "default" });
+		const firstDone = rpc1.waitFor(f => f.type === "agent_end");
+		await rpc1.data({ type: "prompt", message: "hello before plan" });
+		await firstDone;
+
+		await rpc1.data({ type: "set_plan_mode", enabled: true });
+		expect((await rpc1.state()).model?.id).toBe("claude-opus-4-6");
+		rpc1.stop();
+
+		// 模拟 Oryn 控制面冷重启后带常驻基线 A 调用 open_session
+		const rpc2 = startIn(rpc1.dir, env);
+		await rpc2.data({
+			type: "open_session",
+			sessionDir,
+			provider: "anthropic",
+			modelId: "claude-sonnet-4-5",
+		});
+		const resumed = await rpc2.state();
+		expect(resumed.planModeEnabled).toBe(true);
+		expect(resumed.model?.id).toBe("claude-opus-4-6");
+		expect(resumed.thinkingLevel).toBe(ThinkingLevel.High);
+
+		// 退出计划模式仍准确恢复 A
+		await rpc2.data({ type: "set_plan_mode", enabled: false });
+		const afterExit = await rpc2.state();
+		expect(afterExit.planModeEnabled).toBe(false);
+		expect(afterExit.model?.id).toBe("claude-sonnet-4-5");
+		expect(afterExit.thinkingLevel).toBe(ThinkingLevel.Medium);
 	});
 });
