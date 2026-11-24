@@ -87,7 +87,7 @@ declare const chrome: {
 		openOrClosedShadowRoot(element: ChromePageElement): ChromePageRoot | null;
 	};
 	tabs: {
-		query(queryInfo: { url?: string; groupId?: number; active?: boolean; currentWindow?: boolean }): Promise<ChromeTab[]>;
+		query(queryInfo: { url?: string; groupId?: number; active?: boolean; currentWindow?: boolean; lastFocusedWindow?: boolean }): Promise<ChromeTab[]>;
 		get(tabId: number): Promise<ChromeTab>;
 		create(createProperties: { url?: string; active?: boolean }): Promise<ChromeTab>;
 		remove(tabId: number): Promise<void>;

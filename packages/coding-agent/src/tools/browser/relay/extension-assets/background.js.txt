@@ -636,6 +636,9 @@ class OrynCloudClient {
   get active() {
     return !this.#stopped && this.#config.mode === "oryn";
   }
+  async syncConfig() {
+    this.#config = await loadCloudConfig();
+  }
   async start() {
     this.#config = await loadCloudConfig();
     if (this.#config.mode !== "oryn") {
@@ -940,11 +943,17 @@ class OrynCloudClient {
       case "registered":
         if (Array.isArray(msg.threads))
           this.#threads = msg.threads;
+        this.#notifyPopup();
         return;
-      case "threads.update":
-        if (Array.isArray(msg.threads))
+      case "threads.update": {
+        if (Array.isArray(msg.threads)) {
+          const changed = JSON.stringify(this.#threads) !== JSON.stringify(msg.threads);
           this.#threads = msg.threads;
+          if (changed)
+            this.#notifyPopup();
+        }
         return;
+      }
       case "session.open": {
         if (!msg.threadId)
           return;
@@ -957,6 +966,7 @@ class OrynCloudClient {
         this.#sendFrame(msg.threadId, filtered);
         this.#sendSessionState(msg.threadId);
         await this.#refreshBadge();
+        this.#notifyPopup();
         return;
       }
       case "session.close": {
@@ -968,6 +978,7 @@ class OrynCloudClient {
           await Promise.all(tabs.map((id) => this.#host.detachAndUngroup(id).catch(() => {})));
         }
         await this.#refreshBadge();
+        this.#notifyPopup();
         return;
       }
       case "session.frame": {
@@ -990,6 +1001,7 @@ class OrynCloudClient {
       this.#sendFrame(threadId, { t: "rpcResult", id: payload.id, ok: false, error: decision.errorMessage });
       this.#sendSessionState(threadId);
       await this.#refreshBadge();
+      this.#notifyPopup();
       await this.#notifyApproval(threadId, decision.approval);
       return;
     }
@@ -1024,6 +1036,9 @@ class OrynCloudClient {
         priority: 2
       });
     } catch {}
+  }
+  #notifyPopup() {
+    chrome.runtime.sendMessage({ t: "cloud.changed" }).catch(() => {});
   }
   async#handleRevoked(reason) {
     this.#lastError = reason;
@@ -1488,14 +1503,26 @@ chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
   const handle = async () => {
     switch (msg.t) {
       case "popup.getState": {
-        cloud.requestThreadsRefresh();
-        const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        const currentTab = activeTab && activeTab.id !== undefined ? { tabId: activeTab.id, title: activeTab.title ?? "", url: activeTab.url ?? activeTab.pendingUrl ?? "" } : null;
+        await cloud.syncConfig();
+        const isShareableUrl = (u) => /^https?:\/\//i.test(u);
+        const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        let candidate = activeTab;
+        if (!candidate || candidate.id === undefined || !isShareableUrl(candidate.url ?? candidate.pendingUrl ?? "")) {
+          const allTabs = await chrome.tabs.query({});
+          candidate = allTabs.find((t) => t.active && t.id !== undefined && isShareableUrl(t.url ?? t.pendingUrl ?? "")) ?? allTabs.find((t) => t.id !== undefined && isShareableUrl(t.url ?? t.pendingUrl ?? ""));
+        }
+        const currentTab = candidate && candidate.id !== undefined ? { tabId: candidate.id, title: candidate.title ?? "", url: candidate.url ?? candidate.pendingUrl ?? "" } : null;
         return {
           cloud: cloud.getPopupSnapshot(),
           localConnected: ws?.readyState === WebSocket.OPEN,
           currentTab
         };
+      }
+      case "popup.setMode": {
+        const nextMode = msg.mode === "oryn" ? "oryn" : "local";
+        await chrome.storage.local.set({ mode: nextMode });
+        await connect();
+        return { ok: true };
       }
       case "popup.startPairing":
         try {

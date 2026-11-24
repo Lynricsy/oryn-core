@@ -149,6 +149,10 @@ export class OrynCloudClient {
 		return !this.#stopped && this.#config.mode === "oryn";
 	}
 
+	async syncConfig(): Promise<void> {
+		this.#config = await loadCloudConfig();
+	}
+
 	async start(): Promise<void> {
 		this.#config = await loadCloudConfig();
 		if (this.#config.mode !== "oryn") {
@@ -465,10 +469,16 @@ export class OrynCloudClient {
 				return;
 			case "registered":
 				if (Array.isArray(msg.threads)) this.#threads = msg.threads;
+				this.#notifyPopup();
 				return;
-			case "threads.update":
-				if (Array.isArray(msg.threads)) this.#threads = msg.threads;
+			case "threads.update": {
+				if (Array.isArray(msg.threads)) {
+					const changed = JSON.stringify(this.#threads) !== JSON.stringify(msg.threads);
+					this.#threads = msg.threads;
+					if (changed) this.#notifyPopup();
+				}
 				return;
+			}
 			case "session.open": {
 				if (!msg.threadId) return;
 				this.#openSessions.set(msg.threadId, {
@@ -480,6 +490,7 @@ export class OrynCloudClient {
 				this.#sendFrame(msg.threadId, filtered);
 				this.#sendSessionState(msg.threadId);
 				await this.#refreshBadge();
+				this.#notifyPopup();
 				return;
 			}
 			case "session.close": {
@@ -490,6 +501,7 @@ export class OrynCloudClient {
 					await Promise.all(tabs.map(id => this.#host.detachAndUngroup(id).catch(() => {})));
 				}
 				await this.#refreshBadge();
+				this.#notifyPopup();
 				return;
 			}
 			case "session.frame": {
@@ -514,10 +526,10 @@ export class OrynCloudClient {
 			this.#sendFrame(threadId, { t: "rpcResult", id: payload.id, ok: false, error: decision.errorMessage });
 			this.#sendSessionState(threadId);
 			await this.#refreshBadge();
+			this.#notifyPopup();
 			await this.#notifyApproval(threadId, decision.approval);
 			return;
 		}
-
 		try {
 			const result = await this.#host.executeRpc(payload);
 			if (payload.op === "createTab" && result && typeof result === "object" && "tab" in result) {
@@ -552,6 +564,10 @@ export class OrynCloudClient {
 		} catch {
 			// 通知权限缺失时静默降级
 		}
+	}
+
+	#notifyPopup(): void {
+		void chrome.runtime.sendMessage({ t: "cloud.changed" }).catch(() => {});
 	}
 
 	async #handleRevoked(reason: string): Promise<void> {

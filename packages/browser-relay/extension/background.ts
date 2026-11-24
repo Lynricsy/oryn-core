@@ -503,17 +503,31 @@ chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
 	const handle = async (): Promise<unknown> => {
 		switch (msg.t) {
 			case "popup.getState": {
-				cloud.requestThreadsRefresh();
-				const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+				await cloud.syncConfig();
+				const isShareableUrl = (u: string): boolean => /^https?:\/\//i.test(u);
+				const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+				let candidate: (typeof activeTab) | undefined = activeTab;
+				if (!candidate || candidate.id === undefined || !isShareableUrl(candidate.url ?? candidate.pendingUrl ?? "")) {
+					const allTabs = await chrome.tabs.query({});
+					candidate =
+						allTabs.find(t => t.active && t.id !== undefined && isShareableUrl(t.url ?? t.pendingUrl ?? "")) ??
+						allTabs.find(t => t.id !== undefined && isShareableUrl(t.url ?? t.pendingUrl ?? ""));
+				}
 				const currentTab =
-					activeTab && activeTab.id !== undefined
-						? { tabId: activeTab.id, title: activeTab.title ?? "", url: activeTab.url ?? activeTab.pendingUrl ?? "" }
+					candidate && candidate.id !== undefined
+						? { tabId: candidate.id, title: candidate.title ?? "", url: candidate.url ?? candidate.pendingUrl ?? "" }
 						: null;
 				return {
 					cloud: cloud.getPopupSnapshot(),
 					localConnected: ws?.readyState === WebSocket.OPEN,
 					currentTab,
 				};
+			}
+			case "popup.setMode": {
+				const nextMode = msg.mode === "oryn" ? "oryn" : "local";
+				await chrome.storage.local.set({ mode: nextMode });
+				await connect();
+				return { ok: true };
 			}
 			case "popup.startPairing":
 				try {

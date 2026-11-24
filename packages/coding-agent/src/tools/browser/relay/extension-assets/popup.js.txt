@@ -2,6 +2,8 @@
 var root = document.getElementById("app");
 var selectedThreadId = "";
 var pollTimer = null;
+var rendering = false;
+var rerenderQueued = false;
 async function callBg(msg) {
   return await chrome.runtime.sendMessage(msg);
 }
@@ -14,6 +16,22 @@ function el(tag, attrs = {}, text) {
   return node;
 }
 async function render() {
+  if (rendering) {
+    rerenderQueued = true;
+    return;
+  }
+  rendering = true;
+  try {
+    await renderInner();
+  } finally {
+    rendering = false;
+    if (rerenderQueued) {
+      rerenderQueued = false;
+      render();
+    }
+  }
+}
+async function renderInner() {
   const state = await callBg({ t: "popup.getState" });
   root.innerHTML = "";
   const { cloud, localConnected, currentTab } = state;
@@ -41,7 +59,7 @@ async function render() {
     card.append(el("div", {}, localConnected ? "已连接本地 omp browser-relay" : "等待本地 omp browser-relay 连接"), el("p", { class: "muted" }, "如需让远端 Oryn orb 操作本机 Chrome，请点击下方按钮切换到「Oryn 云端模式」。"));
     const switchBtn = el("button", { class: "primary full" }, "切换到 Oryn 云端模式");
     switchBtn.onclick = async () => {
-      await chrome.storage.local.set({ mode: "oryn" });
+      await callBg({ t: "popup.setMode", mode: "oryn" });
       await render();
     };
     card.append(switchBtn);
@@ -224,4 +242,9 @@ async function render() {
     root.append(shareCard);
   }
 }
+chrome.runtime.onMessage.addListener((raw) => {
+  if (raw && typeof raw === "object" && "t" in raw && raw.t === "cloud.changed") {
+    render();
+  }
+});
 render();

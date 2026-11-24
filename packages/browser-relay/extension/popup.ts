@@ -19,7 +19,8 @@ interface PopupStateResponse {
 const root = document.getElementById("app") as HTMLElement;
 let selectedThreadId = "";
 let pollTimer: NodeJS.Timeout | null = null;
-
+let rendering = false;
+let rerenderQueued = false;
 async function callBg<T = unknown>(msg: Record<string, unknown>): Promise<T> {
 	return await chrome.runtime.sendMessage<T>(msg);
 }
@@ -36,6 +37,23 @@ function el<K extends keyof HTMLElementTagNameMap>(
 }
 
 async function render(): Promise<void> {
+	if (rendering) {
+		rerenderQueued = true;
+		return;
+	}
+	rendering = true;
+	try {
+		await renderInner();
+	} finally {
+		rendering = false;
+		if (rerenderQueued) {
+			rerenderQueued = false;
+			void render();
+		}
+	}
+}
+
+async function renderInner(): Promise<void> {
 	const state = await callBg<PopupStateResponse>({ t: "popup.getState" });
 	root.innerHTML = "";
 	const { cloud, localConnected, currentTab } = state;
@@ -78,7 +96,7 @@ async function render(): Promise<void> {
 		);
 		const switchBtn = el("button", { class: "primary full" }, "切换到 Oryn 云端模式");
 		switchBtn.onclick = async () => {
-			await chrome.storage.local.set({ mode: "oryn" });
+			await callBg({ t: "popup.setMode", mode: "oryn" });
 			await render();
 		};
 		card.append(switchBtn);
@@ -297,5 +315,10 @@ async function render(): Promise<void> {
 		root.append(shareCard);
 	}
 }
+chrome.runtime.onMessage.addListener(raw => {
+	if (raw && typeof raw === "object" && "t" in raw && (raw as { t?: unknown }).t === "cloud.changed") {
+		void render();
+	}
+});
 
 void render();
