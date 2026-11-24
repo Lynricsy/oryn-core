@@ -254,10 +254,12 @@ export class OrynPlanModelController {
 	}
 
 	/**
-	 * `open_session` 前置：Oryn 每次拉起 agent 都在 `open_session` 里带上线程常驻的模型与思考级别。
-	 * 若落地的会话处于计划模式且已切到计划模型（续接的会话文件里有 `active` 基线；或目录里只有本进程刚建的空会话、
-	 * 已被 `plan.defaultOnStartup` 带进计划模式），这两项不再立即应用——否则会把计划模型冲掉——而是返回为
-	 * `baseline`，由 {@link adoptOpenSessionBaseline} 在打开之后改作进入前基线，退出计划模式时恢复到它们。
+	 * `open_session` 前置：Oryn 每次拉起 agent 都在 `open_session` 里带上线程常驻的模型与思考级别（线程行里存的是实际档位，
+	 * 没有 `auto`）。落地的会话处于计划模式且已在计划模型上时，这两项都不立即应用——否则会把计划模型冲掉：
+	 * - 续接已有的计划会话（目录里最新的非空会话、或当前已打开且有消息的会话）：会话自己持久化的进入前基线才是准的
+	 *   （保留 `auto` 与来源记录），请求整个丢弃；
+	 * - 本进程刚建、还没有消息、已被 `plan.defaultOnStartup` 带进计划模式的新会话：返回为 `baseline`，由
+	 *   {@link adoptOpenSessionBaseline} 改作进入前基线，退出计划模式时恢复到它们。
 	 * 其余情况原样返回，照常应用。
 	 */
 	async resolveOpenSessionRequest(
@@ -271,17 +273,25 @@ export class OrynPlanModelController {
 		const recent = await findMostRecentNonEmptySession(dir);
 		const latest = recent ? ((await findRecentSessionContinuation(recent))?.session.path ?? recent) : null;
 		const currentFile = current.sessionFile ? path.resolve(current.sessionFile) : undefined;
-		let intoPlan: boolean;
 		if (latest && path.resolve(latest) !== currentFile) {
+			// 将切到另一个已有会话：仍在计划模式时由 reconcileAfterSessionOpen 恢复它自己的持久基线
 			const { mode, baseline } = readBranchPlanState(await readActiveBranchFromFile(latest));
-			intoPlan = mode === "plan" && baseline?.active === true && !!baseline.model;
-		} else if (latest || (currentFile && path.dirname(currentFile) === dir && current.isEmpty)) {
-			// 落地的就是当前会话（openRpcSession 视为已打开、不切换文件）：看内存里的计划态
-			intoPlan = this.#session.getPlanModeState()?.enabled === true && this.#previousState !== undefined;
-		} else {
-			intoPlan = false;
+			return mode === "plan" && baseline?.active === true && !!baseline.model ? { apply: {} } : { apply: request };
 		}
-		return intoPlan ? { apply: {}, baseline: request } : { apply: request };
+		const landsOnCurrent = !!latest || (!!currentFile && path.dirname(currentFile) === dir && current.isEmpty);
+		if (!landsOnCurrent || !this.#inPlanOnPlanModel()) return { apply: request };
+		// 落地的就是当前会话（openRpcSession 不切换文件）：有消息即续接，保留基线；还没有消息才是新会话
+		return this.#hasMessages() ? { apply: {} } : { apply: {}, baseline: request };
+	}
+
+	/** 当前会话处于计划模式且已保存进入前基线（即已经或将要在计划模型上）。 */
+	#inPlanOnPlanModel(): boolean {
+		return this.#session.getPlanModeState()?.enabled === true && this.#previousState !== undefined;
+	}
+
+	/** 活动分支上已有消息：是续接的会话，不是新会话。 */
+	#hasMessages(): boolean {
+		return this.#session.sessionManager.getBranch().some(entry => entry.type === "message");
 	}
 
 	/**
@@ -303,11 +313,13 @@ export class OrynPlanModelController {
 	/**
 	 * Oryn 新线程按创建时选的 role 开场（`oryn_select_model{role, startup:true}`）：若会话已被 `plan.defaultOnStartup`
 	 * 带进计划模式并在计划模型上，把该 role 的模型、思考级别（显式给的优先，否则 role 自带的，再否则沿用原基线）
-	 * 与 role 来源记录改作进入前基线，不切模型，返回 `true`；否则返回 `false`，由调用方照常选 role。
+	 * 与 role 来源记录改作进入前基线，不切模型，返回 `true`。会话已有消息（续接的计划会话收到重发的首批命令）时
+	 * 保留持久基线、同样不切模型，返回 `true`。不在计划模式时返回 `false`，由调用方照常选 role。
 	 */
 	async adoptStartupRole(role: string, thinkingLevel: ConfiguredThinkingLevel | undefined): Promise<boolean> {
 		const prev = this.#previousState;
-		if (!prev || !this.#session.getPlanModeState()?.enabled) return false;
+		if (!prev || !this.#inPlanOnPlanModel()) return false;
+		if (this.#hasMessages()) return true;
 		let resolved = this.#session.resolveRoleModelWithThinking(role);
 		if (!resolved.model || (resolved.matchedPatternIndex ?? 0) > 0) {
 			await this.#session.modelRegistry?.awaitBackgroundRefresh();

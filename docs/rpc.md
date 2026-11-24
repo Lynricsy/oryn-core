@@ -493,7 +493,7 @@ To bind with a specific model instead, pass `provider` and `modelId` together, a
 }
 ```
 
-Oryn: `thinkingLevel` sets the session thinking level after the open, as `set_thinking_level` does. When the opened session is in plan mode on the plan model (a resumed session with an active `oryn-plan-baseline`, or a fresh session that `plan.defaultOnStartup` already put in plan mode), neither the model pair nor `thinkingLevel` is applied: they replace the pre-plan baseline instead (persisted as `oryn-plan-baseline`), and leaving plan mode restores them.
+Oryn: `thinkingLevel` sets the session thinking level after the open, as `set_thinking_level` does. When the opened session is in plan mode on the plan model, neither the model pair nor `thinkingLevel` is applied. A resumed session (one with messages and an active `oryn-plan-baseline`) keeps its own persisted pre-plan baseline, including an `auto` thinking level and its model-source record, so the request is dropped. Only a fresh session with no messages that `plan.defaultOnStartup` already put in plan mode adopts them as the pre-plan baseline (persisted as `oryn-plan-baseline`); leaving plan mode restores them. `oryn_select_model{startup:true}` follows the same rule.
 
 ### `remove_queued_message` payload
 

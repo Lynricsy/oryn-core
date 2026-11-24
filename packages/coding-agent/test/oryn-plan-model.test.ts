@@ -698,6 +698,50 @@ describe("RPC plan mode model switching", () => {
 		expect(afterExit.thinkingLevel).toBe(ThinkingLevel.Medium);
 	});
 
+	test("resumed plan session keeps its persisted baseline (incl. auto thinking) against Oryn's concrete open_session values", async () => {
+		const env = { ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high" };
+		const rpc1 = await start(env);
+		const sessionDir = path.join(rpc1.dir, "sessions");
+
+		await rpc1.data({ type: "oryn_select_model", role: "default" });
+		await rpc1.data({ type: "set_thinking_level", level: "auto" });
+		const before = await rpc1.state();
+		expect(before.thinkingConfigured).toBe("auto");
+		const firstDone = rpc1.waitFor(f => f.type === "agent_end");
+		await rpc1.data({ type: "prompt", message: "hello before plan" });
+		await firstDone;
+		await rpc1.data({ type: "set_plan_mode", enabled: true });
+		expect((await rpc1.state()).model?.id).toBe("claude-opus-4-6");
+		rpc1.stop();
+
+		// Oryn 冷重启：线程行只存了 get_state.thinkingLevel 的实际档位（不是 auto），连同常驻模型发回
+		const rpc2 = startIn(rpc1.dir, env);
+		const opened = await rpc2.data<{ resumed: boolean }>({
+			type: "open_session",
+			sessionDir,
+			provider: "anthropic",
+			modelId: "claude-sonnet-4-5",
+			thinkingLevel: before.thinkingLevel ?? "medium",
+		});
+		expect(opened.resumed).toBe(true);
+		expect((await rpc2.state()).model?.id).toBe("claude-opus-4-6");
+
+		await rpc2.data({ type: "set_plan_mode", enabled: false });
+		const afterExit = await rpc2.state();
+		expect(afterExit.model?.id).toBe("claude-sonnet-4-5");
+		expect(afterExit.thinkingConfigured).toBe("auto");
+
+		// 来源记录也来自持久基线，没有被丢弃
+		const entries = await rpc2.readSessionEntries(afterExit.sessionFile!);
+		const sources = entries.filter(e => e.type === "custom" && e.customType === ORYN_MODEL_SOURCE_ENTRY);
+		expect(sources.at(-1)?.data).toEqual({
+			v: 1,
+			source: "role",
+			model: "anthropic/claude-sonnet-4-5",
+			role: "default",
+		});
+	});
+
 	test("writes baseline A before B model_change so crashing right after B lands still restores A on exit", async () => {
 		const env = {
 			ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high",
