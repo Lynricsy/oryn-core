@@ -136,7 +136,7 @@
     },
     "packages/gui": {
       "name": "@oh-my-pi/omp-gui",
-      "version": "1.0.2",
+      "version": "1.0.4",
       "dependencies": {
         "@codemirror/commands": "6.10.4",
         "@codemirror/lang-json": "^6.0.0",
@@ -152,10 +152,8 @@
         "@xterm/xterm": "^5.5.0",
         "chart.js": "^4.4.0",
         "chokidar": "^4.0.0",
-        "date-fns": "^4.1.0",
         "diff": "^9.0.0",
         "dompurify": "3.4.17",
-        "electron-log": "^5.3.0",
         "electron-store": "^10.0.0",
         "electron-updater": "^6.8.9",
         "highlight.js": "^11.11.0",
@@ -167,7 +165,6 @@
         "react": "^19.0.0",
         "react-chartjs-2": "^5.3.0",
         "react-dom": "^19.0.0",
-        "react-hook-form": "^7.54.0",
         "react-markdown": "^10.0.0",
         "rehype-katex": "^7.0.0",
         "rehype-raw": "7.0.0",
@@ -309,6 +306,18 @@
         "@types/react-dom": "catalog:",
       },
     },
+    "packages/tui": {
+      "name": "@oh-my-pi/pi-tui",
+      "version": "19.1.1",
+      "dependencies": {
+        "@oh-my-pi/pi-natives": "catalog:",
+        "@oh-my-pi/pi-utils": "catalog:",
+        "@oh-my-pi/pi-wire": "catalog:",
+      },
+      "devDependencies": {
+        "kitty-vt-wasm": "catalog:",
+      },
+    },
     "packages/typescript-edit-benchmark": {
       "name": "@oh-my-pi/typescript-edit-benchmark",
       "version": "0.0.1",
@@ -329,18 +338,6 @@
         "@types/babel__generator": "catalog:",
         "@types/babel__traverse": "catalog:",
         "@types/bun": "catalog:",
-      },
-    },
-    "packages/tui": {
-      "name": "@oh-my-pi/pi-tui",
-      "version": "19.1.1",
-      "dependencies": {
-        "@oh-my-pi/pi-natives": "catalog:",
-        "@oh-my-pi/pi-utils": "catalog:",
-        "@oh-my-pi/pi-wire": "catalog:",
-      },
-      "devDependencies": {
-        "kitty-vt-wasm": "catalog:",
       },
     },
     "packages/utils": {
@@ -1555,8 +1552,6 @@
 
     "dagre-d3-es": ["dagre-d3-es@7.0.14", "https://registry.npmmirror.com/dagre-d3-es/-/dagre-d3-es-7.0.14.tgz", { "dependencies": { "d3": "^7.9.0", "lodash-es": "^4.17.21" } }, "sha512-P4rFMVq9ESWqmOgK+dlXvOtLwYg0i7u0HBGJER0LZDJT2VHIPAMZ/riPxqJceWMStH5+E61QxFra9kIS3AqdMg=="],
 
-    "date-fns": ["date-fns@4.4.0", "https://registry.npmmirror.com/date-fns/-/date-fns-4.4.0.tgz", {}, "sha512-+1UMbeh68lH1SegH83CGWwpb6OHHbpSgr3+s5Eww5M4CAgswBpoWS0AjTOfEJ33HiYKz1hdj/KTFprzXHmq/6w=="],
-
     "dayjs": ["dayjs@1.11.23", "https://registry.npmmirror.com/dayjs/-/dayjs-1.11.23.tgz", {}, "sha512-QDTCU0M0MxR3hQfnlDJfwekQiaanm1ubOD231u73WBckQ/fsamwRLiE2GBz6D3a/xF1NgfiDLJjXBa1hYOYTtQ=="],
 
     "debounce-fn": ["debounce-fn@6.0.0", "https://registry.npmmirror.com/debounce-fn/-/debounce-fn-6.0.0.tgz", { "dependencies": { "mimic-function": "^5.0.0" } }, "sha512-rBMW+F2TXryBwB54Q0d8drNEI+TfoS9JpNTAoVpukbWEhjXQq4rySFYLaqXMFXwdv61Zb2OHtj5bviSoimqxRQ=="],
@@ -1622,8 +1617,6 @@
     "electron-builder": ["electron-builder@26.18.0", "https://registry.npmmirror.com/electron-builder/-/electron-builder-26.18.0.tgz", { "dependencies": { "app-builder-lib": "26.18.0", "builder-util": "26.16.0", "builder-util-runtime": "9.7.0", "chalk": "^4.1.2", "ci-info": "^4.2.0", "dmg-builder": "26.18.0", "fs-extra": "^10.1.0", "lazy-val": "^1.0.5", "simple-update-notifier": "2.0.0", "yargs": "^17.6.2" }, "bin": { "electron-builder": "./cli.js", "install-app-deps": "./install-app-deps.js" } }, "sha512-ASgIuQnOq4RuD8jMhS9hI0LS3EMRT1I/M5R6utqifB/BHN80IcCjBdt+DED+NmNPvmBgEtrlExXZitNdA7kXOg=="],
 
     "electron-builder-squirrel-windows": ["electron-builder-squirrel-windows@26.18.0", "https://registry.npmmirror.com/electron-builder-squirrel-windows/-/electron-builder-squirrel-windows-26.18.0.tgz", { "dependencies": { "app-builder-lib": "26.18.0", "builder-util": "26.16.0", "electron-winstaller": "5.4.0" } }, "sha512-a2elgTipboXNIsxqS1HOmHMGp4Pd3LJgIZOdIFTOskBSawvxKyZWYWQ1d7KKA4CtINSchYCYEKzhxRqiKZev9Q=="],
-
-    "electron-log": ["electron-log@5.4.4", "https://registry.npmmirror.com/electron-log/-/electron-log-5.4.4.tgz", {}, "sha512-istWgaXjBfURBSS8LWVW9C3jsc6+ac+tY1lXrQEOTp0lVj+a4OlO1Tmqb36GgnEUDv92DGC9VI1HNXwJinWpgA=="],
 
     "electron-publish": ["electron-publish@26.18.0", "https://registry.npmmirror.com/electron-publish/-/electron-publish-26.18.0.tgz", { "dependencies": { "@types/fs-extra": "^9.0.11", "aws4": "^1.13.2", "builder-util": "26.16.0", "builder-util-runtime": "9.7.0", "chalk": "^4.1.2", "form-data": "^4.0.5", "fs-extra": "^10.1.0", "lazy-val": "^1.0.5", "mime": "^2.5.2" } }, "sha512-MagnqaZSALSWjcdKu5HEVhYUZD/2BDL3q7XzrqWwub6gf/UfD3ItMgmthVDv9w5y9E0gH1C3JWqKaXwf6f4ROg=="],
 
@@ -2164,8 +2157,6 @@
     "react-chartjs-2": ["react-chartjs-2@5.3.1", "https://registry.npmmirror.com/react-chartjs-2/-/react-chartjs-2-5.3.1.tgz", { "peerDependencies": { "chart.js": "^4.1.1", "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0" } }, "sha512-h5IPXKg9EXpjoBzUfyWJvllMjG2mQ4EiuHQFhms/AjUm0XSZHhyRy2xVmLXHKrtcdrPO4mnGqRtYoD0vp95A0A=="],
 
     "react-dom": ["react-dom@19.2.7", "https://registry.npmmirror.com/react-dom/-/react-dom-19.2.7.tgz", { "dependencies": { "scheduler": "^0.27.0" }, "peerDependencies": { "react": "^19.2.7" } }, "sha512-t0BRVXvbiE/o20Hfw669rLbMCDWtYZLvmJigy2f0MxsXF+71pxhR3xOkspmsO8h3ZlNzyibAmtCa3l4lYKk6gQ=="],
-
-    "react-hook-form": ["react-hook-form@7.91.0", "https://registry.npmmirror.com/react-hook-form/-/react-hook-form-7.91.0.tgz", { "peerDependencies": { "@types/react": "*", "react": "^16.8.0 || ^17 || ^18 || ^19" }, "optionalPeers": ["@types/react"] }, "sha512-5BEBUnCBwa28AFXYTYmOaB/+CSpJ/+CWVASHEvIGUzFdHyUiPHeRhG7r5hOZ8nZi0yP7pbHdFNXO/p31EKTJFQ=="],
 
     "react-markdown": ["react-markdown@10.1.0", "https://registry.npmmirror.com/react-markdown/-/react-markdown-10.1.0.tgz", { "dependencies": { "@types/hast": "^3.0.0", "@types/mdast": "^4.0.0", "devlop": "^1.0.0", "hast-util-to-jsx-runtime": "^2.0.0", "html-url-attributes": "^3.0.0", "mdast-util-to-hast": "^13.0.0", "remark-parse": "^11.0.0", "remark-rehype": "^11.0.0", "unified": "^11.0.0", "unist-util-visit": "^5.0.0", "vfile": "^6.0.0" }, "peerDependencies": { "@types/react": ">=18", "react": ">=18" } }, "sha512-qKxVopLT/TyA6BX3Ue5NwabOsAzm0Q7kAPwq6L+wWDwisYs7R8vZ0nRXqq6rkueboxpkjvLGU9fWifiX/ZZFxQ=="],
 
