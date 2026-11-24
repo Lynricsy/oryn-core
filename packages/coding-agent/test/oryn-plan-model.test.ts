@@ -319,6 +319,52 @@ describe("RPC plan mode model switching", () => {
 		expect(rpc.frames.slice(mark).some(f => f.type === "model_changed")).toBe(false);
 	});
 
+	test("same plan model without a restorable source: entry writes no plan source, so exit leaves no stale plan record", async () => {
+		const rpc = await start({ ORYN_PLAN_ROLE: "anthropic/claude-sonnet-4-5:xhigh" });
+		const sources = async () => {
+			const file = (await rpc.state()).sessionFile!;
+			return (await rpc.readSessionEntries(file))
+				.filter(e => e.type === "custom" && e.customType === ORYN_MODEL_SOURCE_ENTRY)
+				.map(e => e.data);
+		};
+		await rpc.data({ type: "set_plan_mode", enabled: true });
+		expect((await rpc.state()).thinkingLevel).toBe(ThinkingLevel.XHigh);
+		await rpc.data({ type: "set_plan_mode", enabled: false });
+		expect((await rpc.state()).thinkingLevel).toBe(ThinkingLevel.Medium);
+		expect(await sources()).toEqual([]);
+	});
+
+	test("same plan model on a fresh defaultOnStartup session: mark_session_start's record becomes the baseline, then plan is shown", async () => {
+		const rpc = await start({
+			ORYN_PLAN_ROLE: "anthropic/claude-sonnet-4-5:xhigh",
+			ORYN_PLAN_DEFAULT_ON_STARTUP: "1",
+		});
+		const sessionDir = path.join(rpc.dir, "sessions");
+		await rpc.data({ type: "open_session", sessionDir });
+		const sources = async () => {
+			const file = (await rpc.state()).sessionFile!;
+			return (await rpc.readSessionEntries(file))
+				.filter(e => e.type === "custom" && e.customType === ORYN_MODEL_SOURCE_ENTRY)
+				.map(e => {
+					const data = e.data as { role?: string; source: string };
+					return data.role ?? data.source;
+				});
+		};
+		// 进入计划时还没有任何来源记录：不写 plan
+		expect(await sources()).toEqual([]);
+
+		const mark = rpc.frames.length;
+		const marked = await rpc.data<{ recorded: boolean }>({ type: "oryn_mark_session_start", explicitModel: false });
+		expect(marked.recorded).toBe(true);
+		// startup 记录成为可恢复的基线来源后补写 plan
+		expect(await sources()).toEqual(["default", "plan"]);
+
+		await rpc.data({ type: "set_plan_mode", enabled: false });
+		expect((await rpc.state()).thinkingLevel).toBe(ThinkingLevel.Medium);
+		expect(await sources()).toEqual(["default", "plan", "default"]);
+		expect(rpc.frames.slice(mark).some(f => f.type === "model_changed")).toBe(false);
+	});
+
 	test("reapplies plan model when plan role is updated mid-planning and still restores pre-plan model", async () => {
 		const rpc = await start({
 			ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high",

@@ -3665,7 +3665,10 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 
 			case "oryn_mark_session_start": {
 				try {
-					return success(id, "oryn_mark_session_start", await handleOrynMarkSessionStart(session, command));
+					const marked = await handleOrynMarkSessionStart(session, command, record =>
+						planModelController.adoptSessionStartRecord(record),
+					);
+					return success(id, "oryn_mark_session_start", marked);
 				} catch (err) {
 					return error(id, "oryn_mark_session_start", err instanceof Error ? err.message : String(err));
 				}

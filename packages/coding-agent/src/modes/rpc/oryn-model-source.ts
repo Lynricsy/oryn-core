@@ -206,11 +206,12 @@ export async function handleOrynSelectModel(
 /**
  * `oryn_mark_session_start`：记下全新会话的模型是怎么来的。分支上已有消息或已有来源记录时不写。
  * `explicitModel` 为真（建线程时显式选了模型）记 `manual`；否则只在核实「当前模型就是启动时按
- * default role 解析出来的」后记 `startup`，任何一条不满足都不写。
+ * default role 解析出来的」后记 `startup`，任何一条不满足都不写。写下记录后调用 `onRecorded`（计划模式据此补全进入前基线）。
  */
 export async function handleOrynMarkSessionStart(
 	session: OrynModelSourceSession,
 	command: { explicitModel?: unknown },
+	onRecorded?: (record: OrynModelSourceData) => Promise<void>,
 ): Promise<OrynMarkSessionStartResult> {
 	const branch = session.sessionManager.getBranch();
 	for (const entry of branch) {
@@ -222,7 +223,9 @@ export async function handleOrynMarkSessionStart(
 	const key = `${model.provider}/${model.id}`;
 
 	if (command.explicitModel === true) {
-		await recordSource(session, { v: 1, source: "manual", model: key });
+		const data: OrynModelSourceData = { v: 1, source: "manual", model: key };
+		await recordSource(session, data);
+		await onRecorded?.(data);
 		return { recorded: true, source: "manual", model: key };
 	}
 
@@ -239,5 +242,6 @@ export async function handleOrynMarkSessionStart(
 	const data: OrynModelSourceData = { v: 1, source: "startup", model: key, role: "default" };
 	if (alias) data.alias = alias;
 	await recordSource(session, data);
+	await onRecorded?.(data);
 	return { recorded: true, source: "startup", role: "default", model: key, ...(alias ? { alias } : {}) };
 }

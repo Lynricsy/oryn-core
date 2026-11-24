@@ -356,6 +356,27 @@ export class OrynPlanModelController {
 		}
 		this.#previousState = next;
 		await this.#persistBaselineActive(next);
+		// 同模型计划（只改了思考级别）：基线刚拿到可恢复的来源记录，现在才写 plan 来源，退出时能写回它
+		if (next.sourceRecord && !prev?.sourceRecord && this.#samePlanModelAsBaseline()) await this.#recordPlanSource();
+	}
+
+	/**
+	 * `oryn_mark_session_start` 刚给新会话记下来源：若会话已在同模型计划模式里（只改了思考级别），
+	 * 把它当作进入前基线的来源记录，再写 plan 来源，退出计划模式时写回它。
+	 */
+	async adoptSessionStartRecord(record: OrynModelSourceData): Promise<void> {
+		const prev = this.#previousState;
+		if (!prev || prev.sourceRecord || !this.#session.getPlanModeState()?.enabled) return;
+		if (!modelMatchesRecord(prev.model, record)) return;
+		await this.#replaceBaseline({ ...prev, sourceRecord: record });
+	}
+
+	/** 计划模式中活动模型就是进入前基线的模型（plan role 与基线同模型，只改了思考级别）。 */
+	#samePlanModelAsBaseline(): boolean {
+		const prev = this.#previousState;
+		return (
+			!!prev && this.#session.getPlanModeState()?.enabled === true && modelsAreEqual(this.#session.model, prev.model)
+		);
 	}
 
 	/** `switch_session` 的单文件基线比对：目标仍在计划模式且请求的模型就是持久基线时不覆盖计划模型。 */
@@ -580,10 +601,12 @@ export class OrynPlanModelController {
 
 		switch (transition.kind) {
 			case "thinking": {
-				// 计划模型与当前模型相同：只改思考级别，不切模型、不发 model_changed，但回合头仍应显示 plan 角色
+				// 计划模型与当前模型相同：只改思考级别，不切模型、不发 model_changed。回合头要显示 plan 角色得写 plan 来源，
+				// 但只有进入前基线有可恢复的来源记录时才写——否则退出时没法写回「无来源」，plan 会一直留着；
+				// 基线之后拿到来源（开场 role、oryn_mark_session_start）时由 #replaceBaseline 补写。
 				const gen = ++this.#generation;
 				this.#session.setThinkingLevel(transition.thinkingLevel);
-				if (gen === this.#generation) await this.#recordPlanSource();
+				if (gen === this.#generation && this.#previousState?.sourceRecord) await this.#recordPlanSource();
 				return true;
 			}
 			case "apply": {
