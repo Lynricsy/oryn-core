@@ -579,9 +579,13 @@ export class OrynPlanModelController {
 		}
 
 		switch (transition.kind) {
-			case "thinking":
+			case "thinking": {
+				// 计划模型与当前模型相同：只改思考级别，不切模型、不发 model_changed，但回合头仍应显示 plan 角色
+				const gen = ++this.#generation;
 				this.#session.setThinkingLevel(transition.thinkingLevel);
+				if (gen === this.#generation) await this.#recordPlanSource();
 				return true;
+			}
 			case "apply": {
 				if (transition.deferred) {
 					this.#pendingSwitch = {
@@ -616,7 +620,11 @@ export class OrynPlanModelController {
 
 	async #restorePrevious(prev: PreviousPlanModelState): Promise<void> {
 		if (modelsAreEqual(this.#session.model, prev.model)) {
+			// 同模型：只恢复思考级别（不切模型、不发 model_changed），并写回进入前的来源记录，让回合头离开 plan 角色
 			this.#session.setThinkingLevel(prev.thinkingLevel);
+			if (prev.sourceRecord && modelMatchesRecord(this.#session.model, prev.sourceRecord)) {
+				await this.#appendSourceRecord(prev.sourceRecord);
+			}
 			if (this.#baselinePersisted) await this.#persistBaselineInactive();
 			return;
 		}

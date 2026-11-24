@@ -243,6 +243,82 @@ describe("RPC plan mode model switching", () => {
 		expect(after.thinkingLevel).toBe(ThinkingLevel.Medium);
 	});
 
+	test("same plan model: entry writes the plan source and exit restores the previous role source without model_changed", async () => {
+		const rpc = await start({ ORYN_PLAN_ROLE: "anthropic/claude-sonnet-4-5:xhigh" });
+		await rpc.data({ type: "oryn_select_model", role: "default" });
+		const sources = async () => {
+			const file = (await rpc.state()).sessionFile!;
+			return (await rpc.readSessionEntries(file))
+				.filter(e => e.type === "custom" && e.customType === ORYN_MODEL_SOURCE_ENTRY)
+				.map(e => e.data);
+		};
+
+		const mark = rpc.frames.length;
+		await rpc.data({ type: "set_plan_mode", enabled: true });
+		expect((await rpc.state()).thinkingLevel).toBe(ThinkingLevel.XHigh);
+		expect((await sources()).at(-1)).toEqual({
+			v: 1,
+			source: "role",
+			model: "anthropic/claude-sonnet-4-5",
+			role: "plan",
+		});
+
+		await rpc.data({ type: "set_plan_mode", enabled: false });
+		expect((await rpc.state()).thinkingLevel).toBe(ThinkingLevel.Medium);
+		expect((await sources()).at(-1)).toEqual({
+			v: 1,
+			source: "role",
+			model: "anthropic/claude-sonnet-4-5",
+			role: "default",
+		});
+		expect(rpc.frames.slice(mark).some(f => f.type === "model_changed")).toBe(false);
+	});
+
+	test("same plan model: startup role adopted as baseline shows plan during planning and the startup role after exit", async () => {
+		const rpc = await start({
+			ORYN_PLAN_ROLE: "anthropic/claude-sonnet-4-5:xhigh",
+			ORYN_SLOW_ROLE: "anthropic/claude-sonnet-4-5:low",
+			ORYN_PLAN_DEFAULT_ON_STARTUP: "1",
+		});
+		const sessionDir = path.join(rpc.dir, "sessions");
+		await rpc.data({ type: "open_session", sessionDir });
+		const sources = async () => {
+			const file = (await rpc.state()).sessionFile!;
+			return (await rpc.readSessionEntries(file))
+				.filter(e => e.type === "custom" && e.customType === ORYN_MODEL_SOURCE_ENTRY)
+				.map(e => e.data);
+		};
+
+		const mark = rpc.frames.length;
+		const selected = await rpc.data<{ baseline?: boolean }>({
+			type: "oryn_select_model",
+			role: "slow",
+			startup: true,
+		});
+		expect(selected.baseline).toBe(true);
+		const inPlan = await rpc.state();
+		expect(inPlan.planModeEnabled).toBe(true);
+		expect(inPlan.thinkingLevel).toBe(ThinkingLevel.XHigh);
+		expect((await sources()).at(-1)).toEqual({
+			v: 1,
+			source: "role",
+			model: "anthropic/claude-sonnet-4-5",
+			role: "plan",
+		});
+
+		await rpc.data({ type: "set_plan_mode", enabled: false });
+		const after = await rpc.state();
+		expect(after.model?.id).toBe("claude-sonnet-4-5");
+		expect(after.thinkingLevel).toBe(ThinkingLevel.Low);
+		expect((await sources()).at(-1)).toEqual({
+			v: 1,
+			source: "role",
+			model: "anthropic/claude-sonnet-4-5",
+			role: "slow",
+		});
+		expect(rpc.frames.slice(mark).some(f => f.type === "model_changed")).toBe(false);
+	});
+
 	test("reapplies plan model when plan role is updated mid-planning and still restores pre-plan model", async () => {
 		const rpc = await start({
 			ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high",
