@@ -25,7 +25,10 @@ import {
 } from "@oh-my-pi/pi-coding-agent/modes/rpc/oryn-plan-model";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import type { CustomEntry } from "@oh-my-pi/pi-coding-agent/session/session-entries";
-import { ORYN_MODEL_SOURCE_ENTRY } from "@oh-my-pi/pi-coding-agent/modes/rpc/oryn-model-source";
+import {
+	ORYN_MODEL_SOURCE_ENTRY,
+	type OrynModelSourceData,
+} from "@oh-my-pi/pi-coding-agent/modes/rpc/oryn-model-source";
 import type { RpcSessionState } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-types";
 import { removeWithRetries, withTimeout } from "@oh-my-pi/pi-utils";
 
@@ -362,6 +365,39 @@ describe("RPC plan mode model switching", () => {
 		await rpc.data({ type: "set_plan_mode", enabled: false });
 		expect((await rpc.state()).thinkingLevel).toBe(ThinkingLevel.Medium);
 		expect(await sources()).toEqual(["default", "plan", "default"]);
+		expect(rpc.frames.slice(mark).some(f => f.type === "model_changed")).toBe(false);
+	});
+
+	test("fresh session switched to plan at startup, then open_session pins the plan model: exit leaves no stale plan source", async () => {
+		const rpc = await start({
+			ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high",
+			ORYN_PLAN_DEFAULT_ON_STARTUP: "1",
+		});
+		const sessionDir = path.join(rpc.dir, "sessions");
+		// Oryn 新线程显式选了 Opus：启动时 Sonnet -> Opus 已写 plan 来源，open_session 再把基线换成 Opus（与计划模型相同）
+		await rpc.data({
+			type: "open_session",
+			sessionDir,
+			provider: "anthropic",
+			modelId: "claude-opus-4-6",
+			thinkingLevel: "medium",
+		});
+		await rpc.data({ type: "oryn_mark_session_start", explicitModel: true });
+		const sources = async () => {
+			const file = (await rpc.state()).sessionFile!;
+			return (await rpc.readSessionEntries(file))
+				.filter(e => e.type === "custom" && e.customType === ORYN_MODEL_SOURCE_ENTRY)
+				.map(e => e.data as OrynModelSourceData);
+		};
+		expect((await sources()).at(-1)?.role).toBe("plan");
+
+		const mark = rpc.frames.length;
+		await rpc.data({ type: "set_plan_mode", enabled: false });
+		const after = await rpc.state();
+		expect(after.model?.id).toBe("claude-opus-4-6");
+		expect(after.thinkingLevel).toBe(ThinkingLevel.Medium);
+		// 没有可恢复的来源：写 manual（等同「无 role」），不让 plan 残留
+		expect((await sources()).at(-1)).toEqual({ v: 1, source: "manual", model: "anthropic/claude-opus-4-6" });
 		expect(rpc.frames.slice(mark).some(f => f.type === "model_changed")).toBe(false);
 	});
 

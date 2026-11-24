@@ -647,6 +647,11 @@ export class OrynPlanModelController {
 			this.#session.setThinkingLevel(prev.thinkingLevel);
 			if (prev.sourceRecord && modelMatchesRecord(this.#session.model, prev.sourceRecord)) {
 				await this.#appendSourceRecord(prev.sourceRecord);
+			} else if (this.#latestSourceIsPlan()) {
+				// 没有可写回的来源，但 plan 来源已写（如启动时异模型切到计划模型，open_session 又把基线换成同一模型）：
+				// 模型相同，客户端无法凭模型否决它，写一条 manual 让回合头回落到「无 role」
+				const model = this.#session.model!;
+				await this.#appendSourceRecord({ v: 1, source: "manual", model: `${model.provider}/${model.id}` });
 			}
 			if (this.#baselinePersisted) await this.#persistBaselineInactive();
 			return;
@@ -689,6 +694,18 @@ export class OrynPlanModelController {
 			...(alias ? { alias } : {}),
 		};
 		await this.#appendSourceRecord(data);
+	}
+
+	/** 活动分支上最近一条来源记录是 plan 角色。 */
+	#latestSourceIsPlan(): boolean {
+		const branch = this.#session.sessionManager.getBranch();
+		for (let i = branch.length - 1; i >= 0; i--) {
+			const entry = branch[i];
+			if (entry.type === "custom" && entry.customType === ORYN_MODEL_SOURCE_ENTRY) {
+				return (entry.data as OrynModelSourceData | undefined)?.role === "plan";
+			}
+		}
+		return false;
 	}
 
 	async #persistBaselineActive(prev: PreviousPlanModelState): Promise<void> {
