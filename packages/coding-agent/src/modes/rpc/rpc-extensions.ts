@@ -8,8 +8,21 @@ import { dedupeUsageReports } from "@oh-my-pi/pi-ai/auth/usage-report";
 import { listProvidersWithEnvKey } from "@oh-my-pi/pi-ai/env-api-key";
 import { getOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
 import { authPolicyFor } from "@oh-my-pi/pi-catalog/compat/auth";
-import { SETTING_TABS, TAB_GROUPS, TAB_METADATA } from "@oh-my-pi/pi-tui/overlays/settings-defs";
-import { collapseSharedUsageReports } from "@oh-my-pi/pi-tui/overlays/usage-display";
+import { SETTING_TABS, type SettingTab, TAB_GROUPS } from "../../config/settings-defs";
+import { collapseSharedUsageReports } from "../../session/usage-display";
+
+const TAB_LABELS: Record<SettingTab, string> = {
+	appearance: "Appearance",
+	model: "Model",
+	interaction: "Interaction",
+	context: "Context",
+	memory: "Memory",
+	files: "Files",
+	shell: "Shell",
+	tools: "Tools",
+	tasks: "Tasks",
+	providers: "Providers",
+};
 import { orderedSettings } from "../../config/all-settings";
 import { cfgDisabledProviders } from "../../config/model-settings";
 import { lookup as lookupSetting } from "../../config/registry";
@@ -153,7 +166,7 @@ export function buildRpcSettingsSchema(settings: Settings): RpcSettingsSchemaRes
 
 	const tabs = SETTING_TABS.map(tab => ({
 		id: tab,
-		label: TAB_METADATA[tab].label,
+		label: TAB_LABELS[tab],
 		groups: [...TAB_GROUPS[tab]],
 	}));
 

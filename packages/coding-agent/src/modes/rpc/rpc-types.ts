@@ -34,15 +34,10 @@ import type {
 	ToolExample,
 } from "@oh-my-pi/pi-ai";
 import type { ModelKind } from "@oh-my-pi/pi-catalog/types";
-import type { LivePhase } from "@oh-my-pi/pi-tui/apps/live-visualizer";
-import type { FormBlock, FormSpan } from "@oh-my-pi/pi-tui/html-form/parse";
-import type { CopyTarget } from "@oh-my-pi/pi-tui/overlays/copy-targets";
-import type { LogoutAccount } from "@oh-my-pi/pi-tui/overlays/logout-account-selector";
-import type { LoopLimitRuntime } from "@oh-my-pi/pi-tui/status-line/loop";
-import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
-import type { GoalStatus } from "@oh-my-pi/pi-tui/tools/goal";
-import type { AgentProgress } from "@oh-my-pi/pi-tui/tools/task";
-import type { TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
+import type { GoalStatus } from "../../tools/details/goal";
+import type { FormBlock, FormSpan } from "../../tools/html-form/parse";
+import type { CopyTarget } from "../view-model/overlays/copy-targets";
+import type { LoopLimitRuntime } from "../view-model/status-line/loop";
 import type { ProviderDiscoveryState } from "../../config/model-provider-discovery";
 import type { BashResult } from "../../exec/bash-executor";
 import type {
@@ -68,12 +63,17 @@ import type { CacheWarmingMode } from "../../session/cache-warmer";
 import type { FileEntry, SessionEntry, SessionTreeNode } from "../../session/session-entries";
 import type { UsageLimitState } from "../../session/usage-limit";
 import type { AvailableSlashCommandSource } from "../../slash-commands/available-commands";
-import type { RpcModelPickerResult } from "./rpc-model-picker";
 import type { SubagentEventPayload, SubagentLifecyclePayload, SubagentProgressPayload } from "../../task";
+import type { AgentProgress } from "../../task/task-details";
 import type { DebugParams } from "../../tools/debug";
+import type { TodoPhase } from "../../tools/details/todo";
+import type { ConfiguredThinkingLevel } from "../../utils/render-utils";
+import type { LivePhase } from "../view-model/apps/live-visualizer";
+import type { LogoutAccount } from "../view-model/overlays/logout-account-selector";
 import type { RpcBrowserHostInfo } from "./rpc-browser-host";
 import type { RpcGoalOp, RpcGoalResult } from "./rpc-goal";
 import type { RpcMessagesPage } from "./rpc-messages";
+import type { RpcModelPickerResult } from "./rpc-model-picker";
 
 // ============================================================================
 // RPC Commands (stdin)

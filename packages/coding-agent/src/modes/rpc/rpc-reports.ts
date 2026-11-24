@@ -4,7 +4,7 @@
  * same session data source as its slash-command twin (see builtin-registry);
  * all formatting stays client-side.
  */
-import { buildJobTree } from "@oh-my-pi/pi-tui/overlays/job-tree";
+import { buildJobTree } from "../view-model/overlays/job-tree";
 import { cfgShareRedactSecrets, cfgShareServerUrl, cfgShareStore } from "../../commands/settings";
 import {
 	buildShareSnapshot,

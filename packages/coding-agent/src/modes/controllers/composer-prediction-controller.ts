@@ -1,5 +1,6 @@
 import { type AgentMessage, isExcludedFromContext } from "@oh-my-pi/pi-agent-core";
 import type { AssistantMessage } from "@oh-my-pi/pi-ai";
+import { signal } from "@oh-my-pi/pi-tui";
 import type { MeterProvider } from "@opentelemetry/api";
 import { logger, prompt, sanitizeText } from "@oh-my-pi/pi-utils";
 import composerPredictionPrompt from "../../prompts/system/composer-prediction-user.md" with { type: "text" };
@@ -82,8 +83,7 @@ interface Prediction {
  * composer (which asks only while its draft is empty and repaints on the `composer_prediction` frame).
  */
 export type PredictionContext = Pick<InteractiveModeContext, "settings" | "viewSession" | "focusedAgentId"> & {
-	editor: Pick<InteractiveModeContext["editor"], "getText">;
-	ui: Pick<InteractiveModeContext["ui"], "requestRender">;
+	composer: Pick<InteractiveModeContext["composer"], "text">;
 };
 
 /**
@@ -147,18 +147,24 @@ export class ComposerPredictionController {
 	readonly #deadlineMs: number;
 	/** Metrics sink; the global provider when unset. */
 	readonly #meterProvider: MeterProvider | undefined;
+	readonly #onChange: (() => void) | undefined;
 	#abort: AbortController | undefined;
-	#prediction: Prediction | undefined;
+	/** Reactive: the composer's ghost reads {@link choices}, so offering or retiring repaints it. */
+	readonly #prediction = signal<Prediction | undefined>(undefined);
 
-	constructor(ctx: PredictionContext, options: { deadlineMs?: number; meterProvider?: MeterProvider } = {}) {
+	constructor(
+		ctx: PredictionContext,
+		options: { deadlineMs?: number; meterProvider?: MeterProvider; onChange?: () => void } = {},
+	) {
 		this.#ctx = ctx;
 		this.#deadlineMs = options.deadlineMs ?? PREDICTION_DEADLINE_MS;
 		this.#meterProvider = options.meterProvider;
+		this.#onChange = options.onChange;
 	}
 
 	/** The prediction's alternatives for the conversation as it stands now, most likely first, if one is ready. */
 	get choices(): readonly string[] | undefined {
-		const prediction = this.#prediction;
+		const prediction = this.#prediction();
 		if (!prediction || !this.#isCurrent(prediction.source)) return undefined;
 		return prediction.choices;
 	}
@@ -174,7 +180,7 @@ export class ComposerPredictionController {
 		// prediction), and a compaction would rewrite the history the prediction reads: skip the
 		// billed request either way.
 		const model = session.model;
-		if (!model || session.isStreaming || session.isCompacting || this.#ctx.editor.getText()) return;
+		if (!model || session.isStreaming || session.isCompacting || this.#ctx.composer.text()) return;
 		const abort = new AbortController();
 		this.#abort = abort;
 		const source: PredictionSource = {
@@ -191,7 +197,7 @@ export class ComposerPredictionController {
 
 	/** The composer painted the current prediction; its first painted frame counts it as shown. */
 	shown(): void {
-		const prediction = this.#prediction;
+		const prediction = this.#prediction.peek();
 		if (!prediction || prediction.shownAt !== undefined || !this.#isCurrent(prediction.source)) return;
 		prediction.shownAt = performance.now();
 		recordPredictionShown(prediction.source.model, prediction.choices.length, this.#meterProvider);
@@ -199,7 +205,7 @@ export class ComposerPredictionController {
 
 	/** The user inserted the alternative at `rank` (Tab or Right); the last insert before retirement counts. */
 	accepted(rank: number): void {
-		const prediction = this.#prediction;
+		const prediction = this.#prediction.peek();
 		if (!prediction || !this.#isCurrent(prediction.source)) return;
 		// Inserted before any frame painted it: outside the shown population the rate is taken over.
 		if (prediction.rank === undefined && prediction.shownAt !== undefined) {
@@ -212,7 +218,7 @@ export class ComposerPredictionController {
 	cancel(): void {
 		this.#abort?.abort();
 		this.#abort = undefined;
-		const prediction = this.#prediction;
+		const prediction = this.#prediction.peek();
 		if (!prediction) return;
 		// Resolved on retirement, so an accepted prediction counts the alternative the user kept.
 		const { source, choices, shownAt, rank, acceptDelayMs } = prediction;
@@ -236,8 +242,8 @@ export class ComposerPredictionController {
 				this.#meterProvider,
 			);
 		}
-		this.#prediction = undefined;
-		this.#ctx.ui.requestRender();
+		this.#prediction.set(undefined);
+		this.#onChange?.();
 	}
 
 	async #run(source: PredictionSource, abort: AbortController, alternatives: boolean): Promise<void> {
@@ -274,8 +280,8 @@ export class ComposerPredictionController {
 		if (!this.#isCurrent(source)) return "stale";
 		if (!choices) return "skipped";
 		// Counted as shown by the composer's first frame that paints it (`shown()`), not here.
-		this.#prediction = { choices, source, shownAt: undefined, acceptDelayMs: undefined, rank: undefined };
-		this.#ctx.ui.requestRender();
+		this.#prediction.set({ choices, source, shownAt: undefined, acceptDelayMs: undefined, rank: undefined });
+		this.#onChange?.();
 		return "offered";
 	}
 

@@ -97,27 +97,7 @@ import { requiresNativeTools, requiresToolFreeHistoryForToolOptOut } from "@oh-m
 import { modelsAreEqual, routedModelsAreEqual } from "@oh-my-pi/pi-catalog/models";
 import type { CatalogPolicyInputs } from "@oh-my-pi/pi-catalog/types";
 import { EditStore, type PowerAssertionOptions } from "@oh-my-pi/pi-natives";
-import { RawSseDebugBuffer } from "@oh-my-pi/pi-tui/apps/debug/raw-sse-buffer";
-import { isUserRequestEntry, transcriptEntryMessage, userTurnDraft } from "@oh-my-pi/pi-tui/chat/transcript-entry";
-import type { AdvisorConfig } from "@oh-my-pi/pi-tui/overlays/advisor-config";
-import { formatUsageResetWindow } from "@oh-my-pi/pi-tui/overlays/usage-display";
-import { containsMagicKeyword } from "@oh-my-pi/pi-tui/prompt/magic-keywords";
-import type { ModelMention } from "@oh-my-pi/pi-tui/prompt/model-mention-syntax";
-import { computeNonMessageTokens, type SystemPromptSources } from "@oh-my-pi/pi-tui/status-line/context-usage";
-import { theme } from "@oh-my-pi/pi-tui/theme";
-import {
-	AUTO_THINKING,
-	type ConfiguredThinkingLevel,
-	parseConfiguredThinkingLevel,
-	shouldDisableReasoning,
-	toReasoningEffort,
-} from "@oh-my-pi/pi-tui/thinking";
-import type { AskToolDetails } from "@oh-my-pi/pi-tui/tools/ask";
-import type { IrcMessage } from "@oh-my-pi/pi-tui/tools/irc";
-import { formatArtifactErrorNotice, type OutputMeta, stripOutputNotice } from "@oh-my-pi/pi-tui/tools/output-meta";
-import { truncateMiddle } from "@oh-my-pi/pi-tui/tools/streaming-output";
-import { isClosedTodo, type TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
-import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
+import { isClosedTodo } from "../tools/details/todo";
 import {
 	$env,
 	escapeXmlText,
@@ -139,7 +119,10 @@ import {
 } from "@oh-my-pi/pi-utils";
 import { writeArchive } from "@oh-my-pi/pi-utils/ar";
 import { frameDataBytesBudget, readerIncludesThinking } from "@oh-my-pi/snapcompact";
-import { ASYNC_NOTIFY_MESSAGE_TYPE } from "@oh-my-pi/pi-tui/chat/messages";
+import type { AdvisorConfig } from "../advisor/advisor-config-types";
+import type { ModelRoleLookup } from "../modes/view-model/overlays/model-browser";
+import { ASYNC_NOTIFY_MESSAGE_TYPE } from "./transcript/messages";
+import { formatUsageResetWindow } from "./usage-display";
 import { loadAdvisorTranscriptCosts } from "../advisor";
 import {
 	ASYNC_JOB_MANAGER_SHUTDOWN_REASON,
@@ -170,6 +153,7 @@ import { expandPromptTemplate, type PromptTemplate } from "../config/prompt-temp
 import { combine, type SettingsScope } from "../config/registry";
 import { buildServiceTierByFamily, isServiceTierForFamily, serviceTierSettingToTier } from "../config/service-tier";
 import { type Settings, withActiveSettings } from "../config/settings";
+import { RawSseDebugBuffer } from "../debug/raw-sse-buffer";
 import { releaseCompletionHandles } from "../eval/completion-bridge";
 import { releaseJudgmentBatches } from "../eval/judgment-batch-bridge";
 import type { EvalPreludeDefinition } from "../eval/preludes";
@@ -222,13 +206,16 @@ import {
 	sessionLocalProtocolOptions,
 } from "../internal-urls";
 import { type ChainJudge, hasNativeJudge, journalJudgmentUsage, resolveJudge, sharedJudgmentCache } from "../judgment";
-import type { JobWidgetEntry } from "@oh-my-pi/pi-tui/tools/job-widget";
+import type { IrcMessage } from "../irc/irc-types";
+import type { JobWidgetEntry } from "../tools/details/job-widget";
 import type { DaemonCompletionEvent } from "../daemon/protocol";
 import { MEMORY_RECALL_CHANGES_MESSAGE_TYPE } from "../memory-backend/recall-entry";
 import { shutdownMnemopiEmbedClient } from "../mnemopi/embed-client";
 import { getMnemopiSessionState, type MnemopiSessionState, setMnemopiSessionState } from "../mnemopi/state";
 import { MAGIC_KEYWORDS, type MagicKeywordContext, type MagicKeywordId } from "../modes/magic-keywords";
 import { parseTurnBudget } from "../modes/turn-budget";
+import { computeNonMessageTokens, type SystemPromptSources } from "./context-usage";
+import { containsMagicKeyword } from "./magic-keywords";
 import { type PlanApprovalDetails, resolveApprovedPlan } from "../plan-mode/approved-plan";
 import { listPlanFiles, readPlanFile, resolvePlanFilePath } from "../plan-mode/plan-files";
 import { loadOverallPlanReference } from "../plan-mode/plan-handoff";
@@ -269,9 +256,17 @@ import type { PerCallModelAdvertisement } from "../task/model-approval";
 import type { AgentDefinition } from "../task/types";
 import { WorkPoolRegistry } from "../task/workpool";
 import type { WorkPoolYieldItem } from "../task/workpool-yield";
+import {
+	AUTO_THINKING,
+	parseConfiguredThinkingLevel,
+	shouldDisableReasoning,
+	toReasoningEffort,
+} from "../thinking/levels";
 import { isAttachmentOnlyTitleInput, isLowSignalTitleInput } from "../tiny/text";
 import type { ImageAttachmentEntry, ToolSession } from "../tools";
 import { resolveApproval } from "../tools/approval";
+import { type AskToolDetails } from "../tools/details/ask";
+import { type ConfiguredThinkingLevel } from "../utils/render-utils";
 import { recoverAskHtml } from "../tools/ask";
 import {
 	armIdleCloseForOwner,
@@ -298,19 +293,22 @@ import {
 	proposeDispatchDetails,
 } from "../tools/resolve";
 import { toolCommandDispatches } from "../tools/tool-commands";
-import { PROPOSE_COMMAND_NAME, REJECT_COMMAND_NAME } from "@oh-my-pi/pi-tui/tools/resolve";
+import { PROPOSE_COMMAND_NAME, REJECT_COMMAND_NAME } from "../tools/details/resolve";
 import { supportsExternalThinking } from "../tools/think";
+import type { TodoPhase } from "../tools/details/todo";
 import {
 	createTodoHudStateData,
 	getTodoHudVisibility,
 	TODO_HUD_STATE_CUSTOM_TYPE,
 	USER_TODO_EDIT_CUSTOM_TYPE,
 } from "../tools/todo";
+import { ToolError } from "../tools/tool-errors";
 import { currentThreadId, isMainThread } from "../thread/identity";
 import { registerLocalSession } from "../thread/session-directory";
 import { prewarmSubagentWorker } from "../thread/subagent-worker";
 import { SubagentSpawnSignal } from "../thread/subagent-spawn-signal";
 import type { AgentOutputManager } from "../task/output-manager";
+import type { ModelMention } from "./model-mention-syntax";
 import { ModelMentionRegistry, type ResolvedModelMention, referencedModelAgents } from "./model-mentions";
 import { parseCommandArgs } from "../utils/command-args";
 import type { EditModeSetting } from "../edit/settings";
@@ -373,6 +371,8 @@ import type {
 } from "./agent-session-types";
 import { writeArtifact } from "./artifacts";
 import { type PowerAssertionHandle, startPowerAssertion } from "./power-assertion-backend";
+import { formatArtifactErrorNotice, type OutputMeta, stripOutputNotice } from "../tools/output-meta-format";
+import { truncateMiddle } from "../tools/streaming-output";
 import {
 	ASYNC_INLINE_RESULT_MAX_CHARS,
 	ASYNC_PREVIEW_MAX_CHARS,
@@ -514,7 +514,8 @@ import {
 } from "./cache-warmer";
 import { type ObservedPromptCacheEntry, promptCacheStatus } from "./prompt-cache-status";
 import { PromptFollowUps } from "./prompt-follow-ups";
-import type { PromptCacheStatus } from "@oh-my-pi/pi-tui/status-line/host";
+import type { PromptCacheStatus } from "../modes/view-model/status-line/host";
+import { isUserRequestEntry, transcriptEntryMessage, userTurnDraft } from "./transcript/transcript-entry";
 import { anonymizeSessionTranscripts } from "./session-anonymizer";
 import {
 	formatSessionDumpText,
@@ -551,6 +552,8 @@ import { ToolChoiceQueue } from "./tool-choice-queue";
 import { planTurnPersistence, sameMessageContent, sessionMessagePersistenceKey } from "./turn-persistence";
 import { TurnRecovery, type TurnRecoveryHost } from "./turn-recovery";
 import { YieldQueue } from "./yield-queue";
+import { currentTheme } from "@oh-my-pi/pi-tui/theme/runtime";
+import { extensionTheme } from "../ui/extensions/render-output";
 
 export * from "./agent-session-events";
 export * from "./agent-session-types";
@@ -786,15 +789,13 @@ const noOpUIContext: ExtensionUIContext = {
 	editor: async () => undefined,
 	addAutocompleteProvider: () => {},
 	get theme() {
-		return theme;
+		return extensionTheme(currentTheme());
 	},
 	getAllThemes: () => Promise.resolve([]),
 	getTheme: () => Promise.resolve(undefined),
 	setTheme: _theme => Promise.resolve({ success: false, error: "UI not available" }),
 	setFooter: () => {},
 	setHeader: () => {},
-	setEditorComponent: () => {},
-	getEditorComponent: () => undefined,
 	getToolsExpanded: () => false,
 	setToolsExpanded: () => {},
 };
@@ -1174,6 +1175,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 
 	#powerAssertion: PowerAssertionHandle | undefined;
 	#scopedModelsRefresher: (() => Promise<void>) | undefined;
+	readonly scopedModelsFromSettings: boolean;
 
 	readonly configWarnings: string[] = [];
 	/** Construction skipped fallback-chain validation; {@link validateRetryFallbackChains} still owes it. */
@@ -2328,6 +2330,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
+		this.scopedModelsFromSettings = config.scopedModelsFromSettings ?? false;
 		this.tokenRate = new TokenRateMeter(text => this.agent.tokenizer.countTokens(text));
 		this.#reseedTokenRate();
 		this.agent.setQueuedMessageGrouping(
@@ -2893,6 +2896,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 			createVibeTools: config.createVibeTools,
 			createThinkTool: config.createThinkTool,
 			builtInToolNames: config.builtInToolNames,
+			hasNativeTool: config.hasNativeTool,
 			mcpManagerToolNames: config.mcpManagerToolNames,
 			presentationPinnedToolNames: config.presentationPinnedToolNames,
 			ensureGoalRegistered: config.ensureGoalRegistered,
@@ -13817,9 +13821,9 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		return this.#models.cycleRoleModels(roleOrder, direction);
 	}
 
-	/** Lists available models after applying the configured enabled-model filter. */
-	getAvailableModels(): Model[] {
-		return this.#models.getAvailableModels();
+	/** Lists available models after applying the configured enabled-model filter; see {@link ModelControls.getAvailableModels}. */
+	getAvailableModels(roleLookup?: ModelRoleLookup): Model[] {
+		return this.#models.getAvailableModels(roleLookup);
 	}
 
 	/** Selects the session thinking level and optionally persists it as the default. */

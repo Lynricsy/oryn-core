@@ -3,7 +3,7 @@ import { isCompiledBinary, isRecord, logger, untilAborted, workerHostEntry } fro
 import type { Subprocess } from "bun";
 import type { Browser, CDPSession } from "puppeteer-core";
 import { ToolAbortError } from "../tool-errors";
-import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
+import { ToolError } from "../tool-errors";
 import {
 	findFreeCdpPort,
 	findReusableCdp,

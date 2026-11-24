@@ -1,4 +1,4 @@
-import type { AskToolDetails } from "@oh-my-pi/pi-tui/tools/ask";
+import type { AskToolDetails } from "../tools/details/ask";
 import type { AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import type { ExtensionUIContext } from "../extensibility/extensions";
 import type { ToolSession } from "../tools";

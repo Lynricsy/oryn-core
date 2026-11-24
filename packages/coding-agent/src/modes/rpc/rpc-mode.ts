@@ -19,36 +19,14 @@ import { LoginCancelledError } from "@oh-my-pi/pi-ai/error";
 import { getOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
 import { toolWireSchema } from "@oh-my-pi/pi-ai/utils/schema";
 import { routedModelsAreEqual } from "@oh-my-pi/pi-catalog/models";
-import {
-	choiceValue,
-	defaultFormData,
-	fieldError,
-	type HtmlFormData,
-	type HtmlFormValue,
-	isArrayChoice,
-	textValue,
-} from "@oh-my-pi/pi-tui/html-form/data";
-import { type ChoiceField, type HtmlForm, parseHtmlForm, type TextField } from "@oh-my-pi/pi-tui/html-form/parse";
-import { buildCopyTargets } from "@oh-my-pi/pi-tui/overlays/copy-targets";
-import {
-	type WordCompletionEngine,
-	type WordCompletionMethod,
-	type WordCompletionQuery,
-	wordCompletionQuery,
-} from "@oh-my-pi/pi-tui/prompt/word-completion";
-import { getAvailableThemesWithPaths, getResolvedThemeColors, type Theme, theme } from "@oh-my-pi/pi-tui/theme";
 import { $env, isRecord, logger, Snowflake, setProjectDir, toError } from "@oh-my-pi/pi-utils";
+import { clearPluginRootsAndCaches, resolveActiveProjectRegistryPath } from "../../discovery/helpers";
 import { orderedSettings } from "../../config/all-settings";
 import { reportedModelLimits } from "../../config/model-discovery";
 import { resolveRoleChain } from "../../config/model-resolver";
 import { roleCandidatePool } from "../../config/model-roles";
 import { lookup as lookupSetting } from "../../config/registry";
 import { resolveConfigHeaders } from "../../config/resolve-config-value";
-import { cfgPlanDefaultOnStartup, cfgPlanEnabled } from "../../plan-mode/settings";
-import { chatConfig, isChatSession } from "../../session/chat-session";
-import { cfgChatSettings } from "../../session/chat-settings";
-import { cfgSttLanguage } from "../../stt/settings";
-import { cfgSpeechVoice } from "../../tts/settings";
 import {
 	type ExtensionAskDialogQuestion,
 	type ExtensionAskDialogResult,
@@ -72,6 +50,29 @@ import {
 	type SkillRediscoverySource,
 } from "../../extensibility/skills";
 import { rebindMemoryBackendForCwd } from "../../hindsight/backend";
+import { cfgPlanDefaultOnStartup, cfgPlanEnabled } from "../../plan-mode/settings";
+import { chatConfig, isChatSession } from "../../session/chat-session";
+import { cfgChatSettings } from "../../session/chat-settings";
+import { cfgSttLanguage } from "../../stt/settings";
+import { cfgSpeechVoice } from "../../tts/settings";
+import { getAvailableThemesWithPaths, getResolvedThemeColors } from "../../ui/theme/service";
+import { buildCopyTargets } from "../view-model/overlays/copy-targets";
+import {
+	choiceValue,
+	defaultFormData,
+	fieldError,
+	type HtmlFormData,
+	type HtmlFormValue,
+	isArrayChoice,
+	textValue,
+} from "../../tools/html-form/data";
+import { type ChoiceField, type HtmlForm, parseHtmlForm, type TextField } from "../../tools/html-form/parse";
+import {
+	type WordCompletionEngine,
+	type WordCompletionMethod,
+	type WordCompletionQuery,
+	wordCompletionQuery,
+} from "../view-model/prompt/word-completion";
 import { requestTextPrediction, textPredictionBackend } from "../../predict/client";
 import { AgentLifecycleManager } from "../../registry/agent-lifecycle";
 import { type AgentSession, type NavigateTreeResult, SessionBusyError } from "../../session/agent-session";
@@ -267,6 +268,10 @@ import type {
 	RpcSubagentSubscriptionLevel,
 	RpcTerminalCliSubcommand,
 } from "./rpc-types";
+import type { Theme } from "@oh-my-pi/pi-tui/theme/contract";
+import { currentTheme } from "@oh-my-pi/pi-tui/theme/runtime";
+import type { ExtensionTheme } from "../../extensibility/extensions/render-types";
+import { extensionTheme } from "../../ui/extensions/render-output";
 import {
 	applyRpcAddDirectory,
 	applyRpcMoveSession,
@@ -2363,15 +2368,15 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 			// Autocomplete provider composition is not supported in RPC mode
 		}
 
-		get theme(): Theme {
-			return theme;
+		get theme(): ExtensionTheme {
+			return extensionTheme(currentTheme());
 		}
 
 		getAllThemes(): Promise<{ name: string; path: string | undefined }[]> {
 			return Promise.resolve([]);
 		}
 
-		getTheme(_name: string): Promise<Theme | undefined> {
+		getTheme(_name: string): Promise<ExtensionTheme | undefined> {
 			return Promise.resolve(undefined);
 		}
 
@@ -2390,14 +2395,6 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 
 		setToolsExpanded(_expanded: boolean) {
 			// Tool expansion not supported in RPC mode - no TUI
-		}
-
-		setEditorComponent(): void {
-			// Custom editor components not supported in RPC mode
-		}
-
-		getEditorComponent() {
-			return undefined;
 		}
 	}
 
@@ -3454,10 +3451,9 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				void showHostedComponent<void>(
 					terminalHost,
 					"Advisor configuration",
-					async (ui, _theme, _keybindings, done) => {
+					async (_ui, _theme, _keybindings, done) => {
 						try {
 							return await createAdvisorConfigOverlay(
-								ui,
 								{
 									session,
 									settings: session.settings,
@@ -3465,7 +3461,6 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 									status: notify("info"),
 									warn: notify("warning"),
 									advisorsChanged: () => {},
-									requestRender: () => ui.requestRender(),
 								},
 								() => done(undefined),
 							);
@@ -3475,13 +3470,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					},
 					{
 						overlay: true,
-						overlayOptions: {
-							anchor: "bottom-center",
-							width: "100%",
-							maxHeight: "100%",
-							margin: 0,
-							fullscreen: true,
-						},
+						fullscreen: true,
 					},
 				).catch((cause: unknown) => {
 					shown.resolve();

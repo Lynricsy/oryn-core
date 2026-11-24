@@ -20,6 +20,7 @@ export async function runRpcOmfg(
 		sessionManager: session.sessionManager,
 		settings: session.settings,
 		ui: { requestRender: () => {} },
+		shell: { dock: { slot: () => ({ set: () => {}, clear: () => {} }) } },
 		omfgContainer: { clear: () => {}, addChild: () => {} },
 		showStatus: (message: string) => {
 			diagnostic = message;

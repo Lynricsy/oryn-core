@@ -6,7 +6,7 @@ import type {
 	RpcTerminalOpenedFrame,
 	RpcTerminalOutputFrame,
 } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-types";
-import type { Component } from "@oh-my-pi/pi-tui";
+import type { ExtensionRows } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 
 let host: RpcTerminalHost | undefined;
 
@@ -47,10 +47,9 @@ function screenText(frames: RpcTerminalFrame[], terminalId: string): string {
 }
 
 /** A component that paints one line and finishes with the first key it receives. */
-function echoComponent(done: (key: string) => void, disposed: string[]): Component & { dispose(): void } {
+function echoComponent(done: (key: string) => void, disposed: string[]): ExtensionRows {
 	return {
 		render: () => ["hosted-marker"],
-		invalidate: () => {},
 		handleInput: (data: string) => done(data),
 		dispose: () => disposed.push("disposed"),
 	};
