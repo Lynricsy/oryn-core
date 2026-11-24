@@ -19,10 +19,12 @@ import * as path from "node:path";
 import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import type { Model } from "@oh-my-pi/pi-ai";
 import {
+	ORYN_PLAN_BASELINE_ENTRY,
 	OrynPlanModelController,
 	type OrynPlanModelSession,
 } from "@oh-my-pi/pi-coding-agent/modes/rpc/oryn-plan-model";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
+import type { CustomEntry } from "@oh-my-pi/pi-coding-agent/session/session-entries";
 import { ORYN_MODEL_SOURCE_ENTRY } from "@oh-my-pi/pi-coding-agent/modes/rpc/oryn-model-source";
 import type { RpcSessionState } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-types";
 import { removeWithRetries, withTimeout } from "@oh-my-pi/pi-utils";
@@ -498,6 +500,11 @@ describe("RPC plan mode model switching", () => {
 		expect(warnings).toHaveLength(1);
 		expect(warnings[0]).toContain("No API key");
 		expect(activeModel).toBe(sonnet);
+		// 失败时不得在会话分支留下 active:true 的基线记录
+		const baselines = session.sessionManager
+			.getBranch()
+			.filter((e): e is CustomEntry => e.type === "custom" && e.customType === ORYN_PLAN_BASELINE_ENTRY);
+		expect(baselines.at(-1)?.data).toEqual({ v: 1, active: false });
 
 		// 退出时不应再尝试恢复不存在的切换
 		await controller.onExitPlanMode();
@@ -592,5 +599,88 @@ describe("RPC plan mode model switching", () => {
 		expect(afterExit.planModeEnabled).toBe(false);
 		expect(afterExit.model?.id).toBe("claude-sonnet-4-5");
 		expect(afterExit.thinkingLevel).toBe(ThinkingLevel.Medium);
+	});
+
+	test("writes baseline A before B model_change so crashing right after B lands still restores A on exit", async () => {
+		const env = {
+			ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high",
+		};
+		const rpc1 = await start(env);
+		const sessionDir = path.join(rpc1.dir, "sessions");
+
+		await rpc1.data({ type: "oryn_select_model", role: "default" });
+		const firstDone = rpc1.waitFor(f => f.type === "agent_end");
+		await rpc1.data({ type: "prompt", message: "hello before plan" });
+		await firstDone;
+
+		await rpc1.data({ type: "set_plan_mode", enabled: true });
+		const inPlan = await rpc1.state();
+		const sessionFile = inPlan.sessionFile!;
+		rpc1.stop();
+
+		const rawLines = (await fs.readFile(sessionFile, "utf8")).split("\n").filter(Boolean);
+		const parsed = rawLines.map(line => JSON.parse(line) as Record<string, unknown>);
+		const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+		const baselineIdx = parsed.findIndex(
+			e =>
+				e.type === "custom" &&
+				e.customType === ORYN_PLAN_BASELINE_ENTRY &&
+				isObject(e.data) &&
+				e.data.active === true,
+		);
+		const modelBIdx = parsed.findIndex(e => e.type === "model_change" && e.model === "anthropic/claude-opus-4-6");
+		const sourceBIdx = parsed.findIndex(
+			e =>
+				e.type === "custom" &&
+				e.customType === ORYN_MODEL_SOURCE_ENTRY &&
+				isObject(e.data) &&
+				e.data.role === "plan",
+		);
+		expect(baselineIdx).toBeGreaterThan(-1);
+		expect(modelBIdx).toBeGreaterThan(-1);
+		expect(sourceBIdx).toBeGreaterThan(-1);
+		expect(baselineIdx).toBeLessThan(modelBIdx);
+		expect(baselineIdx).toBeLessThan(sourceBIdx);
+
+		// 边界 1：截断到刚写完 baseline A、尚未写入 model_change(B) 之前崩溃
+		const crashBeforeModelB = `${rawLines.slice(0, baselineIdx + 1).join("\n")}\n`;
+		await fs.writeFile(sessionFile, crashBeforeModelB, "utf8");
+		const rpcBefore = startIn(rpc1.dir, env);
+		await rpcBefore.data({ type: "open_session", sessionDir });
+		const resumedBefore = await rpcBefore.state();
+		expect(resumedBefore.planModeEnabled).toBe(true);
+		expect(resumedBefore.model?.id).toBe("claude-opus-4-6");
+		expect(resumedBefore.thinkingLevel).toBe(ThinkingLevel.High);
+		await rpcBefore.data({ type: "set_plan_mode", enabled: false });
+		const exitBefore = await rpcBefore.state();
+		expect(exitBefore.model?.id).toBe("claude-sonnet-4-5");
+		expect(exitBefore.thinkingLevel).toBe(ThinkingLevel.Medium);
+		rpcBefore.stop();
+
+		// 边界 2：截断到刚落盘 model_change(B)（任何后续写入之前），模拟两次持久化之间崩溃
+		const crashAfterModelB = `${rawLines.slice(0, modelBIdx + 1).join("\n")}\n`;
+		await fs.writeFile(sessionFile, crashAfterModelB, "utf8");
+
+		const rpc2 = startIn(rpc1.dir, env);
+		await rpc2.data({ type: "open_session", sessionDir });
+		const resumed = await rpc2.state();
+		expect(resumed.planModeEnabled).toBe(true);
+		expect(resumed.model?.id).toBe("claude-opus-4-6");
+
+		// 退出计划模式必须仍能恢复 A（不会因为崩溃在 B 之后而永久丢掉基线）
+		await rpc2.data({ type: "set_plan_mode", enabled: false });
+		const afterExit = await rpc2.state();
+		expect(afterExit.planModeEnabled).toBe(false);
+		expect(afterExit.model?.id).toBe("claude-sonnet-4-5");
+		expect(afterExit.thinkingLevel).toBe(ThinkingLevel.Medium);
+
+		const entriesAfter = await rpc2.readSessionEntries(afterExit.sessionFile!);
+		const sourcesAfter = entriesAfter.filter(e => e.type === "custom" && e.customType === ORYN_MODEL_SOURCE_ENTRY);
+		expect(sourcesAfter.at(-1)?.data).toEqual({
+			v: 1,
+			source: "role",
+			model: "anthropic/claude-sonnet-4-5",
+			role: "default",
+		});
 	});
 });

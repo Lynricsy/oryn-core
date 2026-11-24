@@ -364,10 +364,6 @@ export class OrynPlanModelController {
 		const applied = await this.#applyPlanTransition(currentModel, resolved);
 		if (!applied && capturedHere) {
 			this.#previousState = undefined;
-			return;
-		}
-		if (applied && this.#previousState && !this.#baselinePersisted) {
-			await this.#persistBaselineActive(this.#previousState);
 		}
 	}
 
@@ -391,10 +387,6 @@ export class OrynPlanModelController {
 		const applied = await this.#applyPlanTransition(currentModel, resolved);
 		if (!applied && capturedHere) {
 			this.#previousState = undefined;
-			return;
-		}
-		if (applied && this.#previousState && !this.#baselinePersisted) {
-			await this.#persistBaselineActive(this.#previousState);
 		}
 	}
 
@@ -483,9 +475,16 @@ export class OrynPlanModelController {
 		if (transition.kind !== "apply" || !transition.deferred) {
 			this.#clearPendingPlanSwitch();
 		}
+		if (transition.kind === "none") return true;
+
+		// WAL 顺序：在任何模型或思考级别变更写盘之前先持久化进入前基线 A，
+		// 确保即使在 B 落盘之后崩溃，重启仍能读到原基线并在退出时恢复；应用失败再撤销。
+		const persistedHere = this.#previousState !== undefined && !this.#baselinePersisted;
+		if (persistedHere && this.#previousState) {
+			await this.#persistBaselineActive(this.#previousState);
+		}
+
 		switch (transition.kind) {
-			case "none":
-				return true;
 			case "thinking":
 				this.#session.setThinkingLevel(transition.thinkingLevel);
 				return true;
@@ -504,9 +503,14 @@ export class OrynPlanModelController {
 					const landed = modelsAreEqual(this.#session.model, transition.model);
 					if (landed && gen === this.#generation) {
 						await this.#recordPlanSource();
+					} else if (!landed && persistedHere && this.#baselinePersisted) {
+						await this.#persistBaselineInactive();
 					}
 					return landed;
 				} catch (error) {
+					if (persistedHere && this.#baselinePersisted) {
+						await this.#persistBaselineInactive();
+					}
 					this.#onWarning?.(
 						`Failed to switch to plan model for plan mode: ${error instanceof Error ? error.message : String(error)}`,
 					);
