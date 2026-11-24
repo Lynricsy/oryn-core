@@ -212,6 +212,57 @@ describe("oryn model source", () => {
 			expect(manager.getBranch().length).toBe(before);
 			expect(sourceEntries(manager)).toEqual([]);
 		});
+
+		it("K12: a role whose model only appears after background discovery waits for it instead of failing", async () => {
+			const fx = fixture(manager);
+			const neon = { provider: "google", id: "gemini-4-neon" } as Model;
+			fx.roleModels.Nahida = undefined;
+			fx.session.modelRegistry.awaitBackgroundRefresh = async () => {
+				fx.backgroundRefreshes++;
+				fx.roleModels.Nahida = neon;
+			};
+
+			const result = await handleOrynSelectModel(fx.session, { role: "Nahida" });
+
+			expect(fx.backgroundRefreshes).toBe(1);
+			expect(result).toMatchObject({ model: neon, source: "role", role: "Nahida" });
+			expect(tail(manager, 2)[0]).toMatchObject({
+				type: "model_change",
+				model: "google/gemini-4-neon",
+				role: "Nahida",
+			});
+		});
+
+		it("K12: a role that resolved to a later fallback pattern re-resolves after discovery", async () => {
+			const fx = fixture(manager);
+			const neon = { provider: "google", id: "gemini-4-neon" } as Model;
+			let discovered = false;
+			fx.session.resolveRoleModelWithThinking = () =>
+				discovered
+					? { model: neon, matchedPatternIndex: 0, explicitThinkingLevel: false, warning: undefined }
+					: { model: OPUS, matchedPatternIndex: 1, explicitThinkingLevel: false, warning: undefined };
+			fx.session.modelRegistry.awaitBackgroundRefresh = async () => {
+				fx.backgroundRefreshes++;
+				discovered = true;
+			};
+
+			const result = await handleOrynSelectModel(fx.session, { role: "Nahida" });
+
+			expect(fx.backgroundRefreshes).toBe(1);
+			expect(result.model).toBe(neon);
+		});
+
+		it("K12: a role resolved by its first pattern does not wait for discovery", async () => {
+			const fx = fixture(manager);
+			fx.session.resolveRoleModelWithThinking = () => ({
+				model: SOL,
+				matchedPatternIndex: 0,
+				explicitThinkingLevel: false,
+				warning: undefined,
+			});
+			await handleOrynSelectModel(fx.session, { role: "Mare" });
+			expect(fx.backgroundRefreshes).toBe(0);
+		});
 	});
 
 	describe("roleAliasTarget", () => {

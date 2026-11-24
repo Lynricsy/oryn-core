@@ -111,7 +111,13 @@ export async function handleOrynSelectModel(
 	const { role, provider, modelId } = command;
 	let selectedRole: string | undefined;
 	if (nonEmpty(role) && provider === undefined && modelId === undefined) {
-		const resolved = session.resolveRoleModelWithThinking(role);
+		let resolved = session.resolveRoleModelWithThinking(role);
+		// 会话刚启动时只有内置目录与 models.yml 静态模型，靠远端发现的模型（如 google/gemini-4-neon）还没到：
+		// 解析不到或只落到回退 pattern 时先等后台发现，再按完整目录重新解析，避免误用回退链或报错后沿用 default。
+		if (!resolved.model || (resolved.matchedPatternIndex ?? 0) > 0) {
+			await session.modelRegistry.awaitBackgroundRefresh();
+			resolved = session.resolveRoleModelWithThinking(role);
+		}
 		if (!resolved.model) throw new Error(`Role has no available model: ${role}`);
 		// 内部 `setModel(model, role)` 写 `model_change{role}`，并应用 role 显式配置的思考级别。
 		await session.applyRoleModel({
