@@ -1972,6 +1972,8 @@ export interface OrynSelectModelParams {
 	role?: string;
 	provider?: string;
 	modelId?: string;
+	startup?: boolean;
+	thinkingLevel?: ThinkingLevel;
 }
 
 export interface OrynSelectModelResult {
@@ -1980,6 +1982,7 @@ export interface OrynSelectModelResult {
 	thinkingLevel?: ThinkingLevel;
 	role?: string;
 	alias?: string;
+	baseline?: boolean;
 }
 
 export interface OrynMarkSessionStartParams {

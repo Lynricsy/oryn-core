@@ -292,12 +292,60 @@ export class OrynPlanModelController {
 		const prev = this.#previousState;
 		if (!prev) return;
 		const model = request.model ?? prev.model;
-		const thinkingLevel = request.thinkingLevel ?? prev.thinkingLevel;
 		const sameModel = modelsAreEqual(model, prev.model);
-		if (sameModel && thinkingLevel === prev.thinkingLevel) return;
-		this.#previousState = { model, thinkingLevel, sourceRecord: sameModel ? prev.sourceRecord : undefined };
-		await this.#persistBaselineActive(this.#previousState);
+		await this.#replaceBaseline({
+			model,
+			thinkingLevel: request.thinkingLevel ?? prev.thinkingLevel,
+			sourceRecord: sameModel ? prev.sourceRecord : undefined,
+		});
 	}
+
+	/**
+	 * Oryn 新线程按创建时选的 role 开场（`oryn_select_model{role, startup:true}`）：若会话已被 `plan.defaultOnStartup`
+	 * 带进计划模式并在计划模型上，把该 role 的模型、思考级别（显式给的优先，否则 role 自带的，再否则沿用原基线）
+	 * 与 role 来源记录改作进入前基线，不切模型，返回 `true`；否则返回 `false`，由调用方照常选 role。
+	 */
+	async adoptStartupRole(role: string, thinkingLevel: ConfiguredThinkingLevel | undefined): Promise<boolean> {
+		const prev = this.#previousState;
+		if (!prev || !this.#session.getPlanModeState()?.enabled) return false;
+		let resolved = this.#session.resolveRoleModelWithThinking(role);
+		if (!resolved.model || (resolved.matchedPatternIndex ?? 0) > 0) {
+			await this.#session.modelRegistry?.awaitBackgroundRefresh();
+			resolved = this.#session.resolveRoleModelWithThinking(role);
+		}
+		if (!resolved.model) throw new Error(`Role has no available model: ${role}`);
+		const alias = roleAliasTarget(this.#session.settings, role);
+		await this.#replaceBaseline({
+			model: resolved.model,
+			thinkingLevel:
+				thinkingLevel ??
+				(resolved.explicitThinkingLevel ? resolved.thinkingLevel : undefined) ??
+				prev.thinkingLevel,
+			sourceRecord: {
+				v: 1,
+				source: "role",
+				model: `${resolved.model.provider}/${resolved.model.id}`,
+				role,
+				...(alias ? { alias } : {}),
+			},
+		});
+		return true;
+	}
+
+	async #replaceBaseline(next: PreviousPlanModelState): Promise<void> {
+		const prev = this.#previousState;
+		if (
+			prev &&
+			modelsAreEqual(next.model, prev.model) &&
+			next.thinkingLevel === prev.thinkingLevel &&
+			JSON.stringify(next.sourceRecord) === JSON.stringify(prev.sourceRecord)
+		) {
+			return;
+		}
+		this.#previousState = next;
+		await this.#persistBaselineActive(next);
+	}
+
 	/** `switch_session` 的单文件基线比对：目标仍在计划模式且请求的模型就是持久基线时不覆盖计划模型。 */
 	async filterRequestedModelForSessionFile(
 		sessionFile: string,

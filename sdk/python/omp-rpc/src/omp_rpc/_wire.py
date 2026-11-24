@@ -1912,6 +1912,7 @@ class OrynSelectModelResult:
     thinking_level: ThinkingLevel | None = None
     role: str | None = None
     alias: str | None = None
+    baseline: bool | None = None
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -3650,6 +3651,7 @@ def parse_oryn_select_model_result(value: object, path: str = "OrynSelectModelRe
         thinking_level=optional(payload, "thinkingLevel", _decode_thinking_level, path),
         role=optional(payload, "role", decode_str, path),
         alias=optional(payload, "alias", decode_str, path),
+        baseline=optional(payload, "baseline", decode_bool, path),
     )
 
 
@@ -4074,8 +4076,8 @@ class WireClient:
         data = self._command("cycle_model", params)
         return None if data is None else parse_model_cycle_result(data, "cycle_model")
 
-    def oryn_select_model(self, *, role: str | None = None, provider: str | None = None, model_id: str | None = None) -> OrynSelectModelResult:
-        """Oryn: select the session model by role or by provider/id and record the selection source in the transcript."""
+    def oryn_select_model(self, *, role: str | None = None, provider: str | None = None, model_id: str | None = None, startup: bool | None = None, thinking_level: ThinkingLevel | None = None) -> OrynSelectModelResult:
+        """Oryn: select the session model by role or by provider/id and record the selection source in the transcript. thinkingLevel is applied after the selection. startup marks the role a new Oryn thread starts with: when the session is already in plan mode, the role becomes the pre-plan baseline (baseline: true) instead of replacing the plan model."""
         params: dict[str, object] = {}
         if role is not None:
             params["role"] = role
@@ -4083,6 +4085,10 @@ class WireClient:
             params["provider"] = provider
         if model_id is not None:
             params["modelId"] = model_id
+        if startup is not None:
+            params["startup"] = startup
+        if thinking_level is not None:
+            params["thinkingLevel"] = thinking_level
         return parse_oryn_select_model_result(self._command("oryn_select_model", params), "oryn_select_model")
 
     def oryn_mark_session_start(self, explicit_model: bool | None = None) -> OrynMarkSessionStartResult:

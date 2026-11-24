@@ -464,7 +464,7 @@
 			},
 			{
 				"name": "oryn_select_model",
-				"doc": "Oryn: select the session model by role or by provider/id and record the selection source in the transcript.",
+				"doc": "Oryn: select the session model by role or by provider/id and record the selection source in the transcript. thinkingLevel is applied after the selection. startup marks the role a new Oryn thread starts with: when the session is already in plan mode, the role becomes the pre-plan baseline (baseline: true) instead of replacing the plan model.",
 				"params": "OrynSelectModelParams",
 				"result": "OrynSelectModelResult",
 				"nullable": false,
@@ -7594,6 +7594,12 @@
 				},
 				"modelId": {
 					"type": "string"
+				},
+				"startup": {
+					"type": "boolean"
+				},
+				"thinkingLevel": {
+					"$ref": "#/$defs/ThinkingLevel"
 				}
 			}
 		},
@@ -7618,6 +7624,9 @@
 				},
 				"alias": {
 					"type": "string"
+				},
+				"baseline": {
+					"type": "boolean"
 				}
 			},
 			"required": [

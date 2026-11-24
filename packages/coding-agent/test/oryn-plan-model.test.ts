@@ -521,6 +521,57 @@ describe("RPC plan mode model switching", () => {
 		expect(st.thinkingLevel).toBe(ThinkingLevel.Low);
 	});
 
+	test("fresh session: Oryn startup role selection becomes the pre-plan baseline instead of replacing the plan model", async () => {
+		const rpc = await start({
+			ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high",
+			ORYN_SLOW_ROLE: "anthropic/claude-haiku-4-5",
+			ORYN_PLAN_DEFAULT_ON_STARTUP: "1",
+		});
+		const sessionDir = path.join(rpc.dir, "sessions");
+		await rpc.data({ type: "open_session", sessionDir });
+
+		// Oryn 新线程首批命令：按创建时选的 role 开场（startup），带用户选的思考级别
+		const selected = await rpc.data<{ baseline?: boolean; role?: string }>({
+			type: "oryn_select_model",
+			role: "slow",
+			startup: true,
+			thinkingLevel: "low",
+		});
+		expect(selected.baseline).toBe(true);
+		const inPlan = await rpc.state();
+		expect(inPlan.planModeEnabled).toBe(true);
+		expect(inPlan.model?.id).toBe("claude-opus-4-6");
+		expect(inPlan.thinkingLevel).toBe(ThinkingLevel.High);
+
+		// 退出计划模式：恢复到启动 role 的模型与思考级别，并写回该 role 的来源记录
+		await rpc.data({ type: "set_plan_mode", enabled: false });
+		const after = await rpc.state();
+		expect(after.model?.id).toBe("claude-haiku-4-5");
+		expect(after.thinkingLevel).toBe(ThinkingLevel.Low);
+		const entries = await rpc.readSessionEntries(after.sessionFile!);
+		const sources = entries.filter(e => e.type === "custom" && e.customType === ORYN_MODEL_SOURCE_ENTRY);
+		expect(sources.at(-1)?.data).toEqual({ v: 1, source: "role", model: "anthropic/claude-haiku-4-5", role: "slow" });
+	});
+
+	test("manual role selection during plan mode still switches the model (unchanged semantics)", async () => {
+		const rpc = await start({
+			ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high",
+			ORYN_SLOW_ROLE: "anthropic/claude-haiku-4-5",
+			ORYN_PLAN_DEFAULT_ON_STARTUP: "1",
+		});
+		const selected = await rpc.data<{ baseline?: boolean }>({ type: "oryn_select_model", role: "slow" });
+		expect(selected.baseline).toBeUndefined();
+		expect((await rpc.state()).model?.id).toBe("claude-haiku-4-5");
+	});
+
+	test("startup role selection outside plan mode applies the role model and thinking level", async () => {
+		const rpc = await start({ ORYN_SLOW_ROLE: "anthropic/claude-haiku-4-5" });
+		await rpc.data({ type: "oryn_select_model", role: "slow", startup: true, thinkingLevel: "low" });
+		const st = await rpc.state();
+		expect(st.model?.id).toBe("claude-haiku-4-5");
+		expect(st.thinkingLevel).toBe(ThinkingLevel.Low);
+	});
+
 	test("surfaces warning and leaves pre-plan state clean when setModelTemporary fails", async () => {
 		const warnings: string[] = [];
 		const sonnet = { provider: "anthropic", id: "claude-sonnet-4-5" } as Model;

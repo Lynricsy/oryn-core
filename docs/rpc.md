@@ -177,12 +177,14 @@ Important edge behavior from runtime:
 
 ### Oryn: model selection source
 
-- `{ id?, type: "oryn_select_model", role?: string, provider?: string, modelId?: string }`
+- `{ id?, type: "oryn_select_model", role?: string, provider?: string, modelId?: string, startup?: boolean, thinkingLevel?: ThinkingLevel | "auto" }`
 - `{ id?, type: "oryn_mark_session_start", explicitModel?: boolean }`
 
 Oryn Core only. Both commands append a `custom` session entry with `customType: "oryn-model-source"` and `data: { v: 1, source: "role" | "manual" | "startup", model: "<provider>/<modelId>", role?, alias? }` at the moment a model is chosen, then force the session file onto disk (`ensureOnDisk`) so the record is readable before the first assistant reply. The entry never reaches the LLM context; `model_change` entries are written exactly as omp writes them.
 
 `oryn_select_model` takes either a non-empty `role` (resolved like role cycling; writes `model_change{role}` and a record with `source: "role"`, `role`, and `alias` when the role's configured value is a single alias of another role — one hop only) or both `provider` and `modelId` (exactly `set_model`: writes `model_change{role:"default"}` and a record with `source: "manual"` and no `role`). It returns `{ model, thinkingLevel?, source, role?, alias? }`. Bad arguments fail with `"provider and modelId must be given together"` or `"oryn_select_model requires either role or provider+modelId"`; an unknown model, a role without an available model, or a failed switch (`No API key …`) fails without writing a record.
+
+`thinkingLevel` is applied after the selection, overriding the role's own level. `startup: true` (with `role` only) marks the role a new Oryn thread starts with: when the session is already in plan mode on the plan model (for example after `plan.defaultOnStartup`), the role's model, thinking level and `source: "role"` record replace the pre-plan baseline (`oryn-plan-baseline`) instead of switching the model, and the response carries `baseline: true`; leaving plan mode switches to that role and writes its record. Without `startup`, picking a role during plan mode switches the model as before.
 
 `oryn_mark_session_start` records how a fresh session's model was chosen and returns `{ recorded, source?, role?, alias?, model? }`. It is a no-op (`recorded: false`) once the active branch has any message or a recorded source, or when there is no active model. `explicitModel: true` records `source: "manual"`. Otherwise it records `source: "startup", role: "default"` only after verifying that the branch has at most one `model_change`, that change (if any) carries no role, is not a retry fallback, and names the active model, and that the `default` role resolves to the active model; any failed check records nothing.
 

@@ -269,14 +269,21 @@ export const rpcCommands: readonly RpcCommandSpec[] = [
 	{ name: "cycle_model", doc: "Cycle to the next model.", result: "ModelCycleResult", nullable: true },
 	{
 		name: "oryn_select_model",
-		doc: "Oryn: select the session model by role or by provider/id and record the selection source in the transcript.",
-		params: { "role?": "string", "provider?": "string", "modelId?": "string" },
+		doc: "Oryn: select the session model by role or by provider/id and record the selection source in the transcript. thinkingLevel is applied after the selection. startup marks the role a new Oryn thread starts with: when the session is already in plan mode, the role becomes the pre-plan baseline (baseline: true) instead of replacing the plan model.",
+		params: {
+			"role?": "string",
+			"provider?": "string",
+			"modelId?": "string",
+			"startup?": "boolean",
+			"thinkingLevel?": "ThinkingLevel",
+		},
 		result: {
 			model: "ModelInfo",
 			"thinkingLevel?": "ThinkingLevel",
 			source: "'role' | 'manual'",
 			"role?": "string",
 			"alias?": "string",
+			"baseline?": "boolean",
 		},
 	},
 	{

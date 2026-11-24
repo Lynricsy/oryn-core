@@ -5888,6 +5888,10 @@ pub struct OrynSelectModelParams {
 	pub provider: Option<String>,
 	#[serde(rename = "modelId", default, skip_serializing_if = "Option::is_none")]
 	pub model_id: Option<String>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub startup: Option<bool>,
+	#[serde(rename = "thinkingLevel", default, skip_serializing_if = "Option::is_none")]
+	pub thinking_level: Option<ThinkingLevel>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -5900,6 +5904,8 @@ pub struct OrynSelectModelResult {
 	pub role: Option<String>,
 	#[serde(default, skip_serializing_if = "Option::is_none")]
 	pub alias: Option<String>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub baseline: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -7609,7 +7615,7 @@ impl Command for CycleModelCommand {
 	}
 }
 
-/// Oryn: select the session model by role or by provider/id and record the selection source in the transcript.
+/// Oryn: select the session model by role or by provider/id and record the selection source in the transcript. thinkingLevel is applied after the selection. startup marks the role a new Oryn thread starts with: when the session is already in plan mode, the role becomes the pre-plan baseline (baseline: true) instead of replacing the plan model.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct OrynSelectModelCommand {
 	#[serde(default, skip_serializing_if = "Option::is_none")]
@@ -7618,6 +7624,10 @@ pub struct OrynSelectModelCommand {
 	pub provider: Option<String>,
 	#[serde(rename = "modelId", default, skip_serializing_if = "Option::is_none")]
 	pub model_id: Option<String>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub startup: Option<bool>,
+	#[serde(rename = "thinkingLevel", default, skip_serializing_if = "Option::is_none")]
+	pub thinking_level: Option<ThinkingLevel>,
 }
 
 impl Command for OrynSelectModelCommand {

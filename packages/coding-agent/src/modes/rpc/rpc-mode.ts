@@ -3653,8 +3653,10 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 
 			case "oryn_select_model": {
 				try {
-					const selected = await handleOrynSelectModel(session, command);
-					planModelController.clearPendingSwitch();
+					const selected = await handleOrynSelectModel(session, command, {
+						adoptStartupRole: (role, thinkingLevel) => planModelController.adoptStartupRole(role, thinkingLevel),
+					});
+					if (!selected.baseline) planModelController.clearPendingSwitch();
 					return success(id, "oryn_select_model", selected);
 				} catch (err) {
 					return error(id, "oryn_select_model", err instanceof Error ? err.message : String(err));

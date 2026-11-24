@@ -8324,6 +8324,7 @@ type OrynSelectModelResult struct {
 	ThinkingLevel *ThinkingLevel              `json:"thinkingLevel,omitempty"`
 	Role          *string                     `json:"role,omitempty"`
 	Alias         *string                     `json:"alias,omitempty"`
+	Baseline      *bool                       `json:"baseline,omitempty"`
 }
 
 func (v *OrynSelectModelResult) UnmarshalJSON(data []byte) error {
@@ -8338,6 +8339,7 @@ func (v *OrynSelectModelResult) decodeFrom(raw map[string]json.RawMessage) error
 	d.optional("thinkingLevel", &out.ThinkingLevel)
 	d.optional("role", &out.Role)
 	d.optional("alias", &out.Alias)
+	d.optional("baseline", &out.Baseline)
 	if d.err != nil {
 		return d.err
 	}
@@ -9239,12 +9241,14 @@ func (c Commands) CycleModel(ctx context.Context) (*ModelCycleResult, error) {
 
 // OrynSelectModelCommand holds the parameters of "oryn_select_model".
 type OrynSelectModelCommand struct {
-	Role     *string `json:"role,omitempty"`
-	Provider *string `json:"provider,omitempty"`
-	ModelID  *string `json:"modelId,omitempty"`
+	Role          *string        `json:"role,omitempty"`
+	Provider      *string        `json:"provider,omitempty"`
+	ModelID       *string        `json:"modelId,omitempty"`
+	Startup       *bool          `json:"startup,omitempty"`
+	ThinkingLevel *ThinkingLevel `json:"thinkingLevel,omitempty"`
 }
 
-// OrynSelectModel sends "oryn_select_model": Oryn: select the session model by role or by provider/id and record the selection source in the transcript.
+// OrynSelectModel sends "oryn_select_model": Oryn: select the session model by role or by provider/id and record the selection source in the transcript. thinkingLevel is applied after the selection. startup marks the role a new Oryn thread starts with: when the session is already in plan mode, the role becomes the pre-plan baseline (baseline: true) instead of replacing the plan model.
 func (c Commands) OrynSelectModel(ctx context.Context, p OrynSelectModelCommand) (OrynSelectModelResult, error) {
 	var out OrynSelectModelResult
 	err := c.call(ctx, "oryn_select_model", p, 0, &out)
