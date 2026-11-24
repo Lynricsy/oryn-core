@@ -240,6 +240,8 @@ import { type HostedComponentFactory, showHostedComponent } from "./rpc-custom-u
 import { OrynComposerPredictor } from "./oryn-composer-prediction";
 import { persistRpcLeaf } from "./oryn-leaf";
 import { handleOrynMarkSessionStart, handleOrynSelectModel } from "./oryn-model-source";
+import { type OrynModelSourceData } from "./oryn-model-source";
+import { OrynPlanModelController } from "./oryn-plan-model";
 import { OrynShellPseudoProjector } from "./oryn-shell-pseudo";
 import { OrynToolExecutor } from "./oryn-tool-exec";
 import { handleOrynCancelJob, isOrynLoopPromptCandidate, orynPlanModeConflict } from "./oryn-ui-parity";
@@ -2063,10 +2065,18 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 	const subagentRegistry = subagentEventBus
 		? new RpcSubagentRegistry(subagentEventBus, output, () => session.sessionFile)
 		: undefined;
+	const planModelController = new OrynPlanModelController({
+		session,
+		onWarning: message => output({ type: "notice", level: "warning", message, source: "plan-mode" }),
+	});
 	const planApprovalController = new RpcPlanApprovalController({
 		session,
 		output,
 		onError: err => output(error(undefined, "plan_approval", err.message)),
+		onExitPlanMode: options => planModelController.onExitPlanMode(options),
+		onDeferredModelRestore: () => planModelController.applyDeferredRestore(),
+		onPostNewSession: restored =>
+			planModelController.recordRestoredSourceAfterNewSession(restored as OrynModelSourceData | undefined),
 	});
 	const vibeModeController = new RpcVibeModeController(session);
 	const goalModeController = new RpcGoalModeController({
@@ -2473,7 +2483,12 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 			void goalModeController.handleSessionEvent(event).catch(err => {
 				output(error(undefined, "goal", err instanceof Error ? err.message : String(err)));
 			});
-			if (event.type === "agent_end") loopModeController.onAgentEnd();
+			if (event.type === "agent_end") {
+				loopModeController.onAgentEnd();
+				if (planModelController.hasPendingSwitch) {
+					void planModelController.flushPendingSwitch();
+				}
+			}
 			composerPredictor.observe(event);
 		});
 		// A chat without settings of its own follows the `chat.*` defaults: announce a change,
@@ -2503,6 +2518,8 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				workflow: "parallel",
 			});
 			session.sessionManager.appendModeChange("plan", { planFilePath });
+			planApprovalController.syncArmed();
+			await planModelController.onEnterPlanMode();
 		}
 		session.subscribeCommandMetadataChanged(() => {
 			void emitAvailableCommandsUpdate();
@@ -2950,6 +2967,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					await goalController.settled();
 				}
 				if (!result.data.cancelled) {
+					planModelController.reset();
 					inputGate.commitSessionChange(command);
 					// `branch` leaves a live run streaming to its normal yield; new/switch detach it.
 					if (command.type !== "branch" && command.type !== "fork") promptResults.abortOpen();
@@ -3051,6 +3069,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					// going. Any real open (switch or new) changes the file, even when an aliased path
 					// reopens a transcript with the same id.
 					if (session.sessionFile !== fileBeforeOpen) promptResults.abortOpen();
+					if (session.sessionFile !== fileBeforeOpen) planModelController.reset();
 					void settleWatcher.check();
 					await emitAvailableCommandsUpdate();
 					emitSessionInfoUpdate();
@@ -3588,6 +3607,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					return error(id, "set_model", `Model not found: ${command.provider}/${command.modelId}`);
 				}
 				await session.setModel(model);
+				planModelController.clearPendingSwitch();
 				return success(id, "set_model", model);
 			}
 
@@ -3609,12 +3629,15 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				if (!result) {
 					return success(id, "cycle_model", null);
 				}
+				planModelController.clearPendingSwitch();
 				return success(id, "cycle_model", result);
 			}
 
 			case "oryn_select_model": {
 				try {
-					return success(id, "oryn_select_model", await handleOrynSelectModel(session, command));
+					const selected = await handleOrynSelectModel(session, command);
+					planModelController.clearPendingSwitch();
+					return success(id, "oryn_select_model", selected);
 				} catch (err) {
 					return error(id, "oryn_select_model", err instanceof Error ? err.message : String(err));
 				}
@@ -4867,6 +4890,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				}
 				const planConflict = command.enabled ? orynPlanModeConflict(session) : undefined;
 				if (planConflict) return error(id, "set_plan_mode", planConflict);
+				const wasEnabled = session.getPlanModeState()?.enabled === true;
 				if (command.enabled) {
 					session.setPlanModeState({
 						enabled: true,
@@ -4876,6 +4900,11 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					session.setPlanModeState(undefined);
 				}
 				planApprovalController.syncArmed();
+				if (command.enabled && !wasEnabled) {
+					await planModelController.onEnterPlanMode();
+				} else if (!command.enabled && wasEnabled) {
+					await planModelController.onExitPlanMode();
+				}
 				const state = session.getPlanModeState();
 				return success(id, "set_plan_mode", {
 					enabled: state?.enabled ?? false,
@@ -4954,6 +4983,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 				try {
 					const result = await btw.branch();
 					if (!result.cancelled) {
+						planModelController.reset();
 						subagentRegistry?.clear();
 						await emitAvailableCommandsUpdate();
 						planApprovalController.syncArmed();
@@ -5038,6 +5068,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 					);
 					session.settings.setModelRole(command.role, roleValue);
 					await session.settings.flush();
+					await planModelController.onRoleConfigChanged();
 					output({
 						type: "config_update",
 						model: session.model,

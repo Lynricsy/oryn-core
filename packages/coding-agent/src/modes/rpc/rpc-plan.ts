@@ -46,6 +46,12 @@ interface RpcPlanApprovalControllerDeps {
 	output: (frame: RpcPlanProposalFrame) => void;
 	/** Fire-and-forget error reporting for dispatched turns (mirrors the prompt command's onError). */
 	onError: (error: Error) => void;
+	/** Oryn：退出计划模式时恢复进入前模型（`deferModelRestore` 用于 compact 路径）。 */
+	onExitPlanMode?: (options?: { deferModelRestore?: boolean }) => Promise<unknown>;
+	/** Oryn：compact 路径压缩结束后恢复进入前模型。 */
+	onDeferredModelRestore?: () => Promise<void>;
+	/** Oryn：`execute` / `save` 在 `newSession()` 后补写恢复后的模型来源记录。 */
+	onPostNewSession?: (restoredSource: unknown) => Promise<void>;
 }
 
 export class RpcPlanApprovalController {
@@ -245,9 +251,11 @@ export class RpcPlanApprovalController {
 			this.#pending = undefined;
 			session.setPlanModeState(undefined);
 			this.#disarm();
+			const restoredSource = await this.#deps.onExitPlanMode?.();
 			try {
 				session.sessionManager.appendModeChange("none");
 				const freshSessionStarted = await session.newSession();
+				if (freshSessionStarted) await this.#deps.onPostNewSession?.(restoredSource);
 				return {
 					approved: true,
 					dispatched: false,
@@ -270,6 +278,7 @@ export class RpcPlanApprovalController {
 		this.#pending = undefined;
 		session.setPlanModeState(undefined);
 		this.#disarm();
+		const restoredSource = await this.#deps.onExitPlanMode?.({ deferModelRestore: option === "compact" });
 		session.sessionManager.appendModeChange("none");
 
 		if (option === "execute") {
@@ -279,6 +288,7 @@ export class RpcPlanApprovalController {
 			// session-scoped.
 			const oldLocalRoot = resolveLocalUrlToPath("local://", this.#localProtocolOptions());
 			await session.newSession();
+			await this.#deps.onPostNewSession?.(restoredSource);
 			const newLocalRoot = resolveLocalUrlToPath("local://", this.#localProtocolOptions());
 			await copyLocalArtifactsForFreshSession(oldLocalRoot, newLocalRoot);
 			const newLocalPath = resolveLocalUrlToPath(planFilePath, this.#localProtocolOptions());
@@ -300,6 +310,8 @@ export class RpcPlanApprovalController {
 					dispatched: false,
 					reason: `compaction failed: ${error instanceof Error ? error.message : String(error)}`,
 				};
+			} finally {
+				await this.#deps.onDeferredModelRestore?.();
 			}
 		}
 
