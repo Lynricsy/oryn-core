@@ -74,9 +74,12 @@ async function renderInner(): Promise<void> {
 	left.append(el("span", { class: dotClass }));
 	left.append(el("span", { class: "title" }, cloud.mode === "oryn" ? "Oryn 浏览器中继" : "OMP 本地浏览器中继"));
 	const right = el("div", { class: "row" });
-	const optBtn = el("button", {}, "设置");
-	optBtn.onclick = () => void chrome.runtime.openOptionsPage();
-	right.append(optBtn);
+	const modeBtn = el("button", {}, cloud.mode === "oryn" ? "切回本地" : "Oryn 云端");
+	modeBtn.onclick = async () => {
+		await callBg({ t: "popup.setMode", mode: cloud.mode === "oryn" ? "local" : "oryn" });
+		await render();
+	};
+	right.append(modeBtn);
 	if (cloud.mode === "oryn" && cloud.paired) {
 		const killBtn = el("button", { class: "danger" }, "立即断开");
 		killBtn.onclick = async () => {

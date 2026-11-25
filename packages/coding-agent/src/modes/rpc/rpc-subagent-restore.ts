@@ -14,7 +14,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { isEnoent } from "@oh-my-pi/pi-utils";
-import type { AgentProgress } from "@oh-my-pi/pi-tui/tools/task";
+import type { AgentProgress } from "../../task/task-details";
 import type { AgentHistorySummary } from "../../registry/agent-registry";
 import { readPersistedAgentHistory } from "../../registry/persisted-agents";
 import { readSessionTitle } from "../../session/session-loader";

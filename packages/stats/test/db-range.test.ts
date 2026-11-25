@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { getDashboardStats, getFolderStats, getRequestPage } from "@oh-my-pi/omp-stats/aggregator";
 import { initDb, insertMessageStats } from "@oh-my-pi/omp-stats/db";
 import type { MessageStats } from "@oh-my-pi/omp-stats/types";
+import { handleApi } from "../src/server";
 import { installStatsTestIsolation } from "./helpers/temp-agent";
 
 installStatsTestIsolation("@pi-stats-db-range-");

@@ -4,13 +4,29 @@
  */
 
 import { resolveUsedFraction, type UsageReport } from "@oh-my-pi/pi-ai";
+import { dedupeUsageReports } from "@oh-my-pi/pi-ai/auth/usage-report";
 import { listProvidersWithEnvKey } from "@oh-my-pi/pi-ai/env-api-key";
 import { getOAuthProviders } from "@oh-my-pi/pi-ai/oauth";
-import type { Settings } from "../../config/settings";
+import { authPolicyFor } from "@oh-my-pi/pi-catalog/compat/auth";
+import { SETTING_TABS, type SettingTab, TAB_GROUPS } from "../../config/settings-defs";
+import { collapseSharedUsageReports } from "../../session/usage-display";
+
+const TAB_LABELS: Record<SettingTab, string> = {
+	appearance: "Appearance",
+	model: "Model",
+	interaction: "Interaction",
+	context: "Context",
+	memory: "Memory",
+	files: "Files",
+	shell: "Shell",
+	tools: "Tools",
+	tasks: "Tasks",
+	providers: "Providers",
+};
 import { orderedSettings } from "../../config/all-settings";
 import { cfgDisabledProviders } from "../../config/model-settings";
 import { lookup as lookupSetting } from "../../config/registry";
-import { SETTING_TABS, TAB_GROUPS, TAB_METADATA } from "@oh-my-pi/pi-tui/overlays/settings-defs";
+import type { Settings } from "../../config/settings";
 import type { AgentSession } from "../../session/agent-session";
 import type {
 	RpcProviderInfo,
@@ -50,26 +66,42 @@ function mapUsageReport(report: UsageReport, accountLabel?: string): RpcUsageRep
 		fetchedAt: report.fetchedAt,
 		limits: report.limits.map(mapUsageLimit),
 		notes: report.notes,
-		account: accountLabel ?? (metadata?.email as string | undefined) ?? (metadata?.orgName as string | undefined),
+		// Same identity order the CLI `/usage` dashboard labels accounts with.
+		account:
+			accountLabel ??
+			(metadata?.email as string | undefined) ??
+			(metadata?.accountId as string | undefined) ??
+			(metadata?.orgName as string | undefined),
 		resetCreditsAvailable: report.resetCredits?.availableCount,
 	};
+}
+
+function canonicalUsageProvider(report: UsageReport): UsageReport {
+	const provider = authPolicyFor(report.provider)?.id ?? authPolicyFor(report.provider.toLowerCase())?.id;
+	return provider && provider !== report.provider ? { ...report, provider } : report;
 }
 
 /** Build the structured usage result: provider reports + local session tallies. */
 export async function buildRpcUsageResult(session: AgentSession): Promise<RpcUsageResult> {
 	const reports: RpcUsageReport[] = [];
 	try {
-		const raw = await session.fetchUsageReports();
+		const fetched = await session.fetchUsageReports();
+		// Combine route reports while account and organization IDs are still
+		// available. Collapse shared limits afterwards, including across routes.
+		const raw = fetched ? collapseSharedUsageReports(dedupeUsageReports(fetched.map(canonicalUsageProvider))) : null;
 		if (raw && raw.length > 0) {
 			const currentProvider = session.model?.provider;
 			const authStorage = session.modelRegistry.authStorage;
 			for (const report of raw) {
+				const metadata = report.metadata as Record<string, unknown> | undefined;
+				const ownAccount = metadata?.email ?? metadata?.accountId ?? metadata?.orgName;
+				// A report that knows its own account keeps it: stamping every row
+				// with the session's identity labelled all accounts as one (#72).
 				const identity =
-					report.provider === currentProvider
+					ownAccount == null && report.provider === currentProvider
 						? authStorage.oauth.identity(report.provider, session.sessionId)
 						: undefined;
-				const accountLabel = identity?.email ?? identity?.accountId;
-				reports.push(mapUsageReport(report, accountLabel));
+				reports.push(mapUsageReport(report, identity?.email ?? identity?.accountId));
 			}
 		}
 	} catch {
@@ -134,7 +166,7 @@ export function buildRpcSettingsSchema(settings: Settings): RpcSettingsSchemaRes
 
 	const tabs = SETTING_TABS.map(tab => ({
 		id: tab,
-		label: TAB_METADATA[tab].label,
+		label: TAB_LABELS[tab],
 		groups: [...TAB_GROUPS[tab]],
 	}));
 

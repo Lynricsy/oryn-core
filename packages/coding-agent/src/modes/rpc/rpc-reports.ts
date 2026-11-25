@@ -4,7 +4,7 @@
  * same session data source as its slash-command twin (see builtin-registry);
  * all formatting stays client-side.
  */
-import { buildJobTree } from "@oh-my-pi/pi-tui/overlays/job-tree";
+import { buildJobTree } from "../view-model/overlays/job-tree";
 import { cfgShareRedactSecrets, cfgShareServerUrl, cfgShareStore } from "../../commands/settings";
 import {
 	buildShareSnapshot,
@@ -55,7 +55,7 @@ function classifyToolSource(session: AgentSession, name: string): RpcToolSource 
 
 /**
  * `/tools` parity (command-controller's handleToolsCommand): active
- * top-level tools with their descriptions, then xd:// mounted entries with
+ * top-level tools with their descriptions, then mounted tool commands with
  * their prompt summaries. Both resolve source through the canonical registry.
  */
 export function buildRpcActiveTools(session: AgentSession): RpcActiveToolsResult {
@@ -64,7 +64,7 @@ export function buildRpcActiveTools(session: AgentSession): RpcActiveToolsResult
 		description: tool.description,
 		source: classifyToolSource(session, tool.name),
 	}));
-	for (const mounted of session.getXdevToolEntries()) {
+	for (const mounted of session.getToolCommandEntries()) {
 		tools.push({
 			name: mounted.name,
 			description: mounted.summary,

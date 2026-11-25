@@ -2533,27 +2533,25 @@ func (v *UsageLimitState) decodeFrom(raw map[string]json.RawMessage) error {
 }
 
 type SessionState struct {
-	SessionID              string         `json:"sessionId"`
-	Model                  *ModelInfo     `json:"model,omitempty"`
-	ThinkingLevel          *ThinkingLevel `json:"thinkingLevel,omitempty"`
-	IsStreaming            bool           `json:"isStreaming"`
-	IsCompacting           bool           `json:"isCompacting"`
-	IsBackgroundCompacting bool           `json:"isBackgroundCompacting"`
-	SteeringMode           QueueMode      `json:"steeringMode"`
-	FollowUpMode           QueueMode      `json:"followUpMode"`
-	InterruptMode          InterruptMode  `json:"interruptMode"`
-	SessionFile            *string        `json:"sessionFile,omitempty"`
-	SessionName            *string        `json:"sessionName,omitempty"`
-	AutoCompactionEnabled  bool           `json:"autoCompactionEnabled"`
-	FastModeEnabled        bool           `json:"fastModeEnabled"`
-	FastModeActive         bool           `json:"fastModeActive"`
-	// `/fast` (the `priority` tier) applies to the active model.
-	FastModeSupported bool `json:"fastModeSupported"`
-	// `/fast ultra` (the OpenAI `ultrafast` tier) applies to the active model.
-	UltrafastSupported bool `json:"ultrafastSupported"`
-	// `/fast ultra` is on for the active model.
-	UltrafastEnabled  bool `json:"ultrafastEnabled"`
-	FastModeUltrafast bool `json:"fastModeUltrafast"`
+	SessionID     string         `json:"sessionId"`
+	Model         *ModelInfo     `json:"model,omitempty"`
+	ThinkingLevel *ThinkingLevel `json:"thinkingLevel,omitempty"`
+	// The user's thinking selector: `auto` while auto mode picks the effort, else `thinkingLevel`.
+	ConfiguredThinkingLevel *ConfiguredThinkingLevel `json:"configuredThinkingLevel,omitempty"`
+	// Selectors the active model accepts, as omp's thinking selector lists them: `off`, `auto`, then its efforts.
+	ThinkingLevels         []ConfiguredThinkingLevel `json:"thinkingLevels,omitempty"`
+	IsStreaming            bool                      `json:"isStreaming"`
+	IsCompacting           bool                      `json:"isCompacting"`
+	IsBackgroundCompacting bool                      `json:"isBackgroundCompacting"`
+	SteeringMode           QueueMode                 `json:"steeringMode"`
+	FollowUpMode           QueueMode                 `json:"followUpMode"`
+	InterruptMode          InterruptMode             `json:"interruptMode"`
+	SessionFile            *string                   `json:"sessionFile,omitempty"`
+	SessionName            *string                   `json:"sessionName,omitempty"`
+	AutoCompactionEnabled  bool                      `json:"autoCompactionEnabled"`
+	FastModeEnabled        bool                      `json:"fastModeEnabled"`
+	FastModeActive         bool                      `json:"fastModeActive"`
+	FastModeUltrafast      bool                      `json:"fastModeUltrafast"`
 	// `/slow` applies to the active model.
 	SlowModeSupported bool `json:"slowModeSupported"`
 	// `/slow` is on for the active model; always `false` when `slowModeSupported` is `false`.
@@ -2589,6 +2587,8 @@ func (v *SessionState) decodeFrom(raw map[string]json.RawMessage) error {
 	d.required("sessionId", &out.SessionID)
 	d.optional("model", &out.Model)
 	d.optional("thinkingLevel", &out.ThinkingLevel)
+	d.optional("configuredThinkingLevel", &out.ConfiguredThinkingLevel)
+	d.optional("thinkingLevels", &out.ThinkingLevels)
 	d.defaulted("isStreaming", &out.IsStreaming, `false`)
 	d.defaulted("isCompacting", &out.IsCompacting, `false`)
 	d.defaulted("isBackgroundCompacting", &out.IsBackgroundCompacting, `false`)
@@ -2600,9 +2600,6 @@ func (v *SessionState) decodeFrom(raw map[string]json.RawMessage) error {
 	d.defaulted("autoCompactionEnabled", &out.AutoCompactionEnabled, `false`)
 	d.defaulted("fastModeEnabled", &out.FastModeEnabled, `false`)
 	d.defaulted("fastModeActive", &out.FastModeActive, `false`)
-	d.defaulted("fastModeSupported", &out.FastModeSupported, `false`)
-	d.defaulted("ultrafastSupported", &out.UltrafastSupported, `false`)
-	d.defaulted("ultrafastEnabled", &out.UltrafastEnabled, `false`)
 	d.defaulted("fastModeUltrafast", &out.FastModeUltrafast, `false`)
 	d.defaulted("slowModeSupported", &out.SlowModeSupported, `false`)
 	d.defaulted("slowModeEnabled", &out.SlowModeEnabled, `false`)
@@ -2654,7 +2651,11 @@ type BashResult struct {
 	ArtifactError map[string]json.RawMessage `json:"artifactError,omitempty"`
 	Minimized     map[string]json.RawMessage `json:"minimized,omitempty"`
 	WorkingDir    *string                    `json:"workingDir,omitempty"`
-	Images        []ImageContent             `json:"images,omitempty"`
+	// The command ended in another directory than it started in; the next command starts in its own cwd.
+	MovedCwd *bool `json:"movedCwd,omitempty"`
+	// The command ended with `set -e` on; the next command starts with it off.
+	Errexit *bool          `json:"errexit,omitempty"`
+	Images  []ImageContent `json:"images,omitempty"`
 	// The embedded shell's final `ShellTrace` of the run; only when the caller asked for one.
 	Trace map[string]json.RawMessage `json:"trace,omitempty"`
 	// Set when the command overlapped another one on the session's persistent shell and ran in a fork of it.
@@ -2688,6 +2689,8 @@ func (v *BashResult) decodeFrom(raw map[string]json.RawMessage) error {
 	d.optional("artifactError", &out.ArtifactError)
 	d.optional("minimized", &out.Minimized)
 	d.optional("workingDir", &out.WorkingDir)
+	d.optional("movedCwd", &out.MovedCwd)
+	d.optional("errexit", &out.Errexit)
 	d.optional("images", &out.Images)
 	d.optional("trace", &out.Trace)
 	d.optional("fork", &out.Fork)
@@ -2789,6 +2792,99 @@ func (v *CompactionResult) decodeFrom(raw map[string]json.RawMessage) error {
 	d.optional("details", &out.Details)
 	d.optional("preserveData", &out.PreserveData)
 	d.optional("providerReplayThroughEntryId", &out.ProviderReplayThroughEntryID)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+// A role a model holds, as picker rows chip it.
+type ModelPickerRole struct {
+	Role string `json:"role"`
+	// The role's display tag.
+	Label string `json:"label"`
+	// Auto-selected: the role has no configured model.
+	Auto *bool `json:"auto,omitempty"`
+}
+
+func (v *ModelPickerRole) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "ModelPickerRole", v.decodeFrom)
+}
+
+func (v *ModelPickerRole) decodeFrom(raw map[string]json.RawMessage) error {
+	var out ModelPickerRole
+	d := fieldDecoder{raw: raw, owner: "ModelPickerRole"}
+	d.required("role", &out.Role)
+	d.required("label", &out.Label)
+	d.optional("auto", &out.Auto)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+// One row of omp's session model picker.
+type ModelPickerRow struct {
+	Provider string `json:"provider"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	// The quick role this row applies (`@` search); pass it to `set_model`.
+	Role *string `json:"role,omitempty"`
+	// Visible roles the model holds, built-in order first.
+	Roles []ModelPickerRole `json:"roles,omitempty"`
+	// Steps of the model's thinking slider, low to high: `auto`, `off`, then its efforts. Absent when it has no effort to pick.
+	Thinking []ConfiguredThinkingLevel `json:"thinking,omitempty"`
+	// Model rows: the session's level as this model would run it (the untouched slider). Quick-role rows: the role's explicit level, which `set_model` should carry.
+	ThinkingLevel *ConfiguredThinkingLevel `json:"thinkingLevel,omitempty"`
+	// The session's context exceeds the model's window.
+	OverContext *bool `json:"overContext,omitempty"`
+	// The session runs this row: its model, or under `@` its active quick role.
+	Current *bool `json:"current,omitempty"`
+}
+
+func (v *ModelPickerRow) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "ModelPickerRow", v.decodeFrom)
+}
+
+func (v *ModelPickerRow) decodeFrom(raw map[string]json.RawMessage) error {
+	var out ModelPickerRow
+	d := fieldDecoder{raw: raw, owner: "ModelPickerRow"}
+	d.required("provider", &out.Provider)
+	d.required("id", &out.ID)
+	d.required("name", &out.Name)
+	d.optional("role", &out.Role)
+	d.optional("roles", &out.Roles)
+	d.optional("thinking", &out.Thinking)
+	d.optional("thinkingLevel", &out.ThinkingLevel)
+	d.optional("overContext", &out.OverContext)
+	d.optional("current", &out.Current)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type ModelPickerResult struct {
+	Rows []ModelPickerRow `json:"rows"`
+	// Leading rows that are recently used or role-held (the picker's Recent block); 0 when there is no such split.
+	Recent int64 `json:"recent"`
+	// Matching rows before `limit`.
+	Total int64 `json:"total"`
+}
+
+func (v *ModelPickerResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "ModelPickerResult", v.decodeFrom)
+}
+
+func (v *ModelPickerResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out ModelPickerResult
+	d := fieldDecoder{raw: raw, owner: "ModelPickerResult"}
+	d.required("rows", &out.Rows)
+	d.required("recent", &out.Recent)
+	d.required("total", &out.Total)
 	if d.err != nil {
 		return d.err
 	}
@@ -6563,10 +6659,11 @@ func (v *FormSection) decodeFrom(raw map[string]json.RawMessage) error {
 	return nil
 }
 
-// The whole form of one `ask` tool call; sent only after `set_ask_dialog` enables it with `form: true`.
+// Exactly one representation: HTML by default, or parsed sections when the host enables structured forms with set_ask_dialog.
 type FormUiRequest struct {
 	ID       string        `json:"id"`
-	Sections []FormSection `json:"sections"`
+	HTML     *string       `json:"html,omitempty"`
+	Sections []FormSection `json:"sections,omitempty"`
 	Timeout  *int64        `json:"timeout,omitempty"`
 }
 
@@ -6580,7 +6677,8 @@ func (v *FormUiRequest) decodeFrom(raw map[string]json.RawMessage) error {
 	d.constant("type", "extension_ui_request")
 	d.required("id", &out.ID)
 	d.constant("method", "form")
-	d.required("sections", &out.Sections)
+	d.optional("html", &out.HTML)
+	d.optional("sections", &out.Sections)
 	d.optional("timeout", &out.Timeout)
 	if d.err != nil {
 		return d.err
@@ -6960,7 +7058,7 @@ func (v ConfirmUiResponse) MarshalJSON() ([]byte, error) {
 	return encodeObject(plain(v), `"type":"extension_ui_response"`, nil)
 }
 
-// Dismisses a dialog; `timedOut` reports the host's own deadline (an `ask` dialog then takes its recommended answers).
+// Dismisses a dialog; `timedOut` reports the host's own deadline (an `ask` dialog then takes its recommended answers, a `form` its defaults).
 type CancelUiResponse struct {
 	ID       string `json:"id"`
 	TimedOut *bool  `json:"timedOut,omitempty"`
@@ -7045,6 +7143,35 @@ func (v FormUiResponse) MarshalJSON() ([]byte, error) {
 	return encodeObject(plain(v), `"type":"extension_ui_response"`, nil)
 }
 
+// Answers a `form` request with the submitted form data.
+type DataUiResponse struct {
+	ID string `json:"id"`
+	// Submitted values by control `name`: a string, a number, or a string array.
+	Data map[string]json.RawMessage `json:"data"`
+}
+
+func (v *DataUiResponse) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "DataUiResponse", v.decodeFrom)
+}
+
+func (v *DataUiResponse) decodeFrom(raw map[string]json.RawMessage) error {
+	var out DataUiResponse
+	d := fieldDecoder{raw: raw, owner: "DataUiResponse"}
+	d.constant("type", "extension_ui_response")
+	d.required("id", &out.ID)
+	d.required("data", &out.Data)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+func (v DataUiResponse) MarshalJSON() ([]byte, error) {
+	type plain DataUiResponse
+	return encodeObject(plain(v), `"type":"extension_ui_response"`, nil)
+}
+
 // Host reply to an extension UI request; variants share `type` and differ by their payload key.
 type ExtensionUiResponse struct {
 	// Value holds one variant. Encode-only: no discriminator tells the variants apart.
@@ -7060,6 +7187,7 @@ func (ValueUiResponse) isExtensionUiResponse()   {}
 func (ConfirmUiResponse) isExtensionUiResponse() {}
 func (CancelUiResponse) isExtensionUiResponse()  {}
 func (AnswersUiResponse) isExtensionUiResponse() {}
+func (DataUiResponse) isExtensionUiResponse()    {}
 func (FormUiResponse) isExtensionUiResponse()    {}
 
 func (v ExtensionUiResponse) MarshalJSON() ([]byte, error) {
@@ -7413,6 +7541,7 @@ func (ValueUiResponse) isRpcInbound()   {}
 func (ConfirmUiResponse) isRpcInbound() {}
 func (CancelUiResponse) isRpcInbound()  {}
 func (AnswersUiResponse) isRpcInbound() {}
+func (DataUiResponse) isRpcInbound()    {}
 func (FormUiResponse) isRpcInbound()    {}
 func (HostToolUpdate) isRpcInbound()    {}
 func (HostToolResult) isRpcInbound()    {}
@@ -7972,6 +8101,25 @@ func (v *NegotiateProtocolResult) decodeFrom(raw map[string]json.RawMessage) err
 	return nil
 }
 
+type AbortAndDeliverQueueResult struct {
+	Aborted bool `json:"aborted"`
+}
+
+func (v *AbortAndDeliverQueueResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "AbortAndDeliverQueueResult", v.decodeFrom)
+}
+
+func (v *AbortAndDeliverQueueResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out AbortAndDeliverQueueResult
+	d := fieldDecoder{raw: raw, owner: "AbortAndDeliverQueueResult"}
+	d.required("aborted", &out.Aborted)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
 type SetSlowModeResult struct {
 	Enabled bool `json:"enabled"`
 }
@@ -8164,82 +8312,6 @@ func (v *CancelSubagentResult) decodeFrom(raw map[string]json.RawMessage) error 
 	return nil
 }
 
-type OrynCancelJobResult struct {
-	Cancelled bool `json:"cancelled"`
-}
-
-func (v *OrynCancelJobResult) UnmarshalJSON(data []byte) error {
-	return decodeWith(data, "OrynCancelJobResult", v.decodeFrom)
-}
-
-func (v *OrynCancelJobResult) decodeFrom(raw map[string]json.RawMessage) error {
-	var out OrynCancelJobResult
-	d := fieldDecoder{raw: raw, owner: "OrynCancelJobResult"}
-	d.required("cancelled", &out.Cancelled)
-	if d.err != nil {
-		return d.err
-	}
-	*v = out
-	return nil
-}
-
-type OrynToolDefsResult struct {
-	Tools []ToolDescriptor `json:"tools"`
-}
-
-func (v *OrynToolDefsResult) UnmarshalJSON(data []byte) error {
-	return decodeWith(data, "OrynToolDefsResult", v.decodeFrom)
-}
-
-func (v *OrynToolDefsResult) decodeFrom(raw map[string]json.RawMessage) error {
-	var out OrynToolDefsResult
-	d := fieldDecoder{raw: raw, owner: "OrynToolDefsResult"}
-	d.required("tools", &out.Tools)
-	if d.err != nil {
-		return d.err
-	}
-	*v = out
-	return nil
-}
-
-type OrynToolCallResult struct {
-	Result HostToolResultPayload `json:"result"`
-}
-
-func (v *OrynToolCallResult) UnmarshalJSON(data []byte) error {
-	return decodeWith(data, "OrynToolCallResult", v.decodeFrom)
-}
-
-func (v *OrynToolCallResult) decodeFrom(raw map[string]json.RawMessage) error {
-	var out OrynToolCallResult
-	d := fieldDecoder{raw: raw, owner: "OrynToolCallResult"}
-	d.required("result", &out.Result)
-	if d.err != nil {
-		return d.err
-	}
-	*v = out
-	return nil
-}
-
-type OrynToolCancelResult struct {
-	Cancelled bool `json:"cancelled"`
-}
-
-func (v *OrynToolCancelResult) UnmarshalJSON(data []byte) error {
-	return decodeWith(data, "OrynToolCancelResult", v.decodeFrom)
-}
-
-func (v *OrynToolCancelResult) decodeFrom(raw map[string]json.RawMessage) error {
-	var out OrynToolCancelResult
-	d := fieldDecoder{raw: raw, owner: "OrynToolCancelResult"}
-	d.required("cancelled", &out.Cancelled)
-	if d.err != nil {
-		return d.err
-	}
-	*v = out
-	return nil
-}
-
 type LiveStartResult struct {
 	Voice string `json:"voice"`
 }
@@ -8316,102 +8388,6 @@ func (v *DictationStopResult) decodeFrom(raw map[string]json.RawMessage) error {
 	}
 	*v = out
 	return nil
-}
-
-type OrynSelectModelResult struct {
-	Model         ModelInfo                   `json:"model"`
-	Source        OrynSelectModelResultSource `json:"source"`
-	ThinkingLevel *ThinkingLevel              `json:"thinkingLevel,omitempty"`
-	Role          *string                     `json:"role,omitempty"`
-	Alias         *string                     `json:"alias,omitempty"`
-	Baseline      *bool                       `json:"baseline,omitempty"`
-}
-
-func (v *OrynSelectModelResult) UnmarshalJSON(data []byte) error {
-	return decodeWith(data, "OrynSelectModelResult", v.decodeFrom)
-}
-
-func (v *OrynSelectModelResult) decodeFrom(raw map[string]json.RawMessage) error {
-	var out OrynSelectModelResult
-	d := fieldDecoder{raw: raw, owner: "OrynSelectModelResult"}
-	d.required("model", &out.Model)
-	d.required("source", &out.Source)
-	d.optional("thinkingLevel", &out.ThinkingLevel)
-	d.optional("role", &out.Role)
-	d.optional("alias", &out.Alias)
-	d.optional("baseline", &out.Baseline)
-	if d.err != nil {
-		return d.err
-	}
-	*v = out
-	return nil
-}
-
-type OrynSelectModelResultSource string
-
-const (
-	OrynSelectModelResultSourceRole   OrynSelectModelResultSource = "role"
-	OrynSelectModelResultSourceManual OrynSelectModelResultSource = "manual"
-)
-
-func (v *OrynSelectModelResultSource) UnmarshalJSON(data []byte) error {
-	s, err := decodeString(data, "OrynSelectModelResultSource")
-	if err != nil {
-		return err
-	}
-	switch value := OrynSelectModelResultSource(s); value {
-	case OrynSelectModelResultSourceRole, OrynSelectModelResultSourceManual:
-		*v = value
-		return nil
-	}
-	return unknownValue("OrynSelectModelResultSource", s)
-}
-
-type OrynMarkSessionStartResult struct {
-	Recorded bool                              `json:"recorded"`
-	Source   *OrynMarkSessionStartResultSource `json:"source,omitempty"`
-	Role     *string                           `json:"role,omitempty"`
-	Alias    *string                           `json:"alias,omitempty"`
-	Model    *string                           `json:"model,omitempty"`
-}
-
-func (v *OrynMarkSessionStartResult) UnmarshalJSON(data []byte) error {
-	return decodeWith(data, "OrynMarkSessionStartResult", v.decodeFrom)
-}
-
-func (v *OrynMarkSessionStartResult) decodeFrom(raw map[string]json.RawMessage) error {
-	var out OrynMarkSessionStartResult
-	d := fieldDecoder{raw: raw, owner: "OrynMarkSessionStartResult"}
-	d.required("recorded", &out.Recorded)
-	d.optional("source", &out.Source)
-	d.optional("role", &out.Role)
-	d.optional("alias", &out.Alias)
-	d.optional("model", &out.Model)
-	if d.err != nil {
-		return d.err
-	}
-	*v = out
-	return nil
-}
-
-type OrynMarkSessionStartResultSource string
-
-const (
-	OrynMarkSessionStartResultSourceStartup OrynMarkSessionStartResultSource = "startup"
-	OrynMarkSessionStartResultSourceManual  OrynMarkSessionStartResultSource = "manual"
-)
-
-func (v *OrynMarkSessionStartResultSource) UnmarshalJSON(data []byte) error {
-	s, err := decodeString(data, "OrynMarkSessionStartResultSource")
-	if err != nil {
-		return err
-	}
-	switch value := OrynMarkSessionStartResultSource(s); value {
-	case OrynMarkSessionStartResultSourceStartup, OrynMarkSessionStartResultSourceManual:
-		*v = value
-		return nil
-	}
-	return unknownValue("OrynMarkSessionStartResultSource", s)
 }
 
 type GetAvailableModelsResult struct {
@@ -8879,6 +8855,18 @@ func (c Commands) AbortAndRestoreQueue(ctx context.Context) (AbortAndRestoreQueu
 	return out, err
 }
 
+// AbortAndDeliverQueue sends "abort_and_deliver_queue": Abort the current run and continue it with the queued user input (the TUI's empty Enter); `aborted` is false when no run was streaming with queued input.
+func (c Commands) AbortAndDeliverQueue(ctx context.Context) (AbortAndDeliverQueueResult, error) {
+	var out AbortAndDeliverQueueResult
+	err := c.call(ctx, "abort_and_deliver_queue", nil, 0, &out)
+	return out, err
+}
+
+// Resume sends "resume": Continue the agent (the TUI's `.`/`c` shortcut), interrupting a running turn first; queued input continues the run in place of the continue directive. Acknowledged once the continuation is under way.
+func (c Commands) Resume(ctx context.Context) error {
+	return c.call(ctx, "resume", nil, 0, nil)
+}
+
 // NewSessionCommand holds the parameters of "new_session".
 type NewSessionCommand struct {
 	ParentSession *string `json:"parentSession,omitempty"`
@@ -8893,13 +8881,12 @@ func (c Commands) NewSession(ctx context.Context, p NewSessionCommand) (Cancella
 
 // OpenSessionCommand holds the parameters of "open_session".
 type OpenSessionCommand struct {
-	SessionDir    string         `json:"sessionDir"`
-	Provider      *string        `json:"provider,omitempty"`
-	ModelID       *string        `json:"modelId,omitempty"`
-	ThinkingLevel *ThinkingLevel `json:"thinkingLevel,omitempty"`
+	SessionDir string  `json:"sessionDir"`
+	Provider   *string `json:"provider,omitempty"`
+	ModelID    *string `json:"modelId,omitempty"`
 }
 
-// OpenSession sends "open_session": Continue the newest non-empty session in a directory, or start a fresh one there. Give provider and modelId together to override the saved model; otherwise an unavailable saved model fails the request. Oryn: thinkingLevel sets the session thinking level; when the opened session is in plan mode on the plan model, the given model and thinkingLevel become the pre-plan baseline restored on exit instead.
+// OpenSession sends "open_session": Continue the newest non-empty session in a directory, or start a fresh one there. Give provider and modelId together to override the saved model; otherwise an unavailable saved model fails the request.
 func (c Commands) OpenSession(ctx context.Context, p OpenSessionCommand) (OpenSessionResult, error) {
 	var out OpenSessionResult
 	err := c.call(ctx, "open_session", p, 0, &out)
@@ -8923,18 +8910,6 @@ type SetFastModeCommand struct {
 func (c Commands) SetFastMode(ctx context.Context, p SetFastModeCommand) (FastModeResult, error) {
 	var out FastModeResult
 	err := c.call(ctx, "set_fast_mode", p, 0, &out)
-	return out, err
-}
-
-// SetUltrafastModeCommand holds the parameters of "set_ultrafast_mode".
-type SetUltrafastModeCommand struct {
-	Enabled bool `json:"enabled"`
-}
-
-// SetUltrafastMode sends "set_ultrafast_mode": Turn `/fast ultra` (the OpenAI `ultrafast` service tier) on or off for the active model.
-func (c Commands) SetUltrafastMode(ctx context.Context, p SetUltrafastModeCommand) (FastModeResult, error) {
-	var out FastModeResult
-	err := c.call(ctx, "set_ultrafast_mode", p, 0, &out)
 	return out, err
 }
 
@@ -9097,56 +9072,6 @@ func (c Commands) CancelSubagent(ctx context.Context, p CancelSubagentCommand) (
 	return out.Cancelled, err
 }
 
-// OrynCancelJobCommand holds the parameters of "oryn_cancel_job".
-type OrynCancelJobCommand struct {
-	JobID string `json:"jobId"`
-}
-
-// OrynCancelJob sends "oryn_cancel_job": Oryn: cancel one running background job this session owns (`/jobs kill <id>`); false when there is none by that id.
-func (c Commands) OrynCancelJob(ctx context.Context, p OrynCancelJobCommand) (bool, error) {
-	var out OrynCancelJobResult
-	err := c.call(ctx, "oryn_cancel_job", p, 0, &out)
-	return out.Cancelled, err
-}
-
-// OrynToolDefsCommand holds the parameters of "oryn_tool_defs".
-type OrynToolDefsCommand struct {
-	Names []string `json:"names,omitempty"`
-}
-
-// OrynToolDefs sends "oryn_tool_defs": Oryn: definitions of the named session tools (default: the enabled ones); unknown and denied names are skipped.
-func (c Commands) OrynToolDefs(ctx context.Context, p OrynToolDefsCommand) ([]ToolDescriptor, error) {
-	var out OrynToolDefsResult
-	err := c.call(ctx, "oryn_tool_defs", p, 0, &out)
-	return out.Tools, err
-}
-
-// OrynToolCallCommand holds the parameters of "oryn_tool_call".
-type OrynToolCallCommand struct {
-	CallID    string                     `json:"callId"`
-	ToolName  string                     `json:"toolName"`
-	Arguments map[string]json.RawMessage `json:"arguments,omitempty"`
-}
-
-// OrynToolCall sends "oryn_tool_call": Oryn: run one session tool directly, without the model; partial output streams as `oryn_tool_update` frames. A tool that throws yields `isError: true`.
-func (c Commands) OrynToolCall(ctx context.Context, p OrynToolCallCommand) (HostToolResultPayload, error) {
-	var out OrynToolCallResult
-	err := c.call(ctx, "oryn_tool_call", p, 1800*time.Second, &out)
-	return out.Result, err
-}
-
-// OrynToolCancelCommand holds the parameters of "oryn_tool_cancel".
-type OrynToolCancelCommand struct {
-	CallID string `json:"callId"`
-}
-
-// OrynToolCancel sends "oryn_tool_cancel": Oryn: abort a running `oryn_tool_call`; false when no call with that id is running.
-func (c Commands) OrynToolCancel(ctx context.Context, p OrynToolCancelCommand) (bool, error) {
-	var out OrynToolCancelResult
-	err := c.call(ctx, "oryn_tool_cancel", p, 0, &out)
-	return out.Cancelled, err
-}
-
 // SteerSubagentCommand holds the parameters of "steer_subagent".
 type SteerSubagentCommand struct {
 	SubagentID string `json:"subagentId"`
@@ -9223,6 +9148,10 @@ func (c Commands) DictationStop(ctx context.Context) (string, error) {
 type SetModelCommand struct {
 	Provider string `json:"provider"`
 	ModelID  string `json:"modelId"`
+	// Thinking level to run the model at, clamped to it; omitted re-applies the session's level.
+	ThinkingLevel *ConfiguredThinkingLevel `json:"thinkingLevel,omitempty"`
+	// Model role the switch records (a quick-role pick passes its role); default `default`. Nothing is persisted.
+	Role *string `json:"role,omitempty"`
 }
 
 // SetModel sends "set_model": Select a model by provider and id.
@@ -9236,34 +9165,6 @@ func (c Commands) SetModel(ctx context.Context, p SetModelCommand) (ModelInfo, e
 func (c Commands) CycleModel(ctx context.Context) (*ModelCycleResult, error) {
 	var out *ModelCycleResult
 	err := c.call(ctx, "cycle_model", nil, 0, &out)
-	return out, err
-}
-
-// OrynSelectModelCommand holds the parameters of "oryn_select_model".
-type OrynSelectModelCommand struct {
-	Role          *string        `json:"role,omitempty"`
-	Provider      *string        `json:"provider,omitempty"`
-	ModelID       *string        `json:"modelId,omitempty"`
-	Startup       *bool          `json:"startup,omitempty"`
-	ThinkingLevel *ThinkingLevel `json:"thinkingLevel,omitempty"`
-}
-
-// OrynSelectModel sends "oryn_select_model": Oryn: select the session model by role or by provider/id and record the selection source in the transcript. thinkingLevel is applied after the selection. startup marks the role a new Oryn thread starts with: when the session is already in plan mode, the role becomes the pre-plan baseline (baseline: true) instead of replacing the plan model.
-func (c Commands) OrynSelectModel(ctx context.Context, p OrynSelectModelCommand) (OrynSelectModelResult, error) {
-	var out OrynSelectModelResult
-	err := c.call(ctx, "oryn_select_model", p, 0, &out)
-	return out, err
-}
-
-// OrynMarkSessionStartCommand holds the parameters of "oryn_mark_session_start".
-type OrynMarkSessionStartCommand struct {
-	ExplicitModel *bool `json:"explicitModel,omitempty"`
-}
-
-// OrynMarkSessionStart sends "oryn_mark_session_start": Oryn: record how a fresh session's model was chosen; a no-op once the session has messages or a recorded source.
-func (c Commands) OrynMarkSessionStart(ctx context.Context, p OrynMarkSessionStartCommand) (OrynMarkSessionStartResult, error) {
-	var out OrynMarkSessionStartResult
-	err := c.call(ctx, "oryn_mark_session_start", p, 0, &out)
 	return out, err
 }
 
@@ -9319,9 +9220,25 @@ func (v *DiscoverProviderModelsCommandDiscoveryType) UnmarshalJSON(data []byte) 
 	return unknownValue("DiscoverProviderModelsCommandDiscoveryType", s)
 }
 
+// GetModelPickerCommand holds the parameters of "get_model_picker".
+type GetModelPickerCommand struct {
+	// Search text; blank browses every model, `provider/` limits matches to a provider.
+	Query *string `json:"query,omitempty"`
+	// Most rows to return; default 100.
+	Limit *int64 `json:"limit,omitempty"`
+}
+
+// GetModelPicker sends "get_model_picker": Model picker rows ordered and ranked as omp's session model picker shows them; a query starting with `@` lists quick roles.
+func (c Commands) GetModelPicker(ctx context.Context, p GetModelPickerCommand) (ModelPickerResult, error) {
+	var out ModelPickerResult
+	err := c.call(ctx, "get_model_picker", p, 0, &out)
+	return out, err
+}
+
 // SetThinkingLevelCommand holds the parameters of "set_thinking_level".
 type SetThinkingLevelCommand struct {
-	Level ThinkingLevel `json:"level"`
+	// `auto` lets omp pick the effort per turn.
+	Level ConfiguredThinkingLevel `json:"level"`
 }
 
 // SetThinkingLevel sends "set_thinking_level": Set the thinking level.

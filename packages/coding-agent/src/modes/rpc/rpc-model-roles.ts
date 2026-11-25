@@ -1,12 +1,13 @@
 import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import { type Model, modelKind } from "@oh-my-pi/pi-catalog/types";
-import type { ModelBrowserRegistry } from "@oh-my-pi/pi-tui/overlays/model-browser";
 import {
 	formatModelSelectorValue,
 	MAX_THINKING_SUFFIX_OPTIONS,
 	parseModelString,
-} from "@oh-my-pi/pi-tui/overlays/model-selector";
-import { type ConfiguredThinkingLevel, roleThinkingLevels } from "@oh-my-pi/pi-tui/thinking";
+} from "../../config/model-selector";
+import { roleThinkingLevels } from "../../thinking/levels";
+import type { ConfiguredThinkingLevel } from "../../utils/render-utils";
+import type { ModelBrowserRegistry } from "../view-model/overlays/model-browser";
 import { getKnownRoleIds, getRoleInfo, roleCandidatePool } from "../../config/model-roles";
 import type { Settings } from "../../config/settings";
 import type { RpcModelRoleMetadataResult, RpcModelRoleSelection, RpcModelRolesResult } from "./rpc-types";

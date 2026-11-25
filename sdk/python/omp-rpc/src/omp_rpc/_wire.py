@@ -651,6 +651,10 @@ class SessionState:
     session_id: str
     model: ModelInfo | None = None
     thinking_level: ThinkingLevel | None = None
+    configured_thinking_level: ConfiguredThinkingLevel | None = None
+    """The user's thinking selector: `auto` while auto mode picks the effort, else `thinkingLevel`."""
+    thinking_levels: tuple[ConfiguredThinkingLevel, ...] | None = None
+    """Selectors the active model accepts, as omp's thinking selector lists them: `off`, `auto`, then its efforts."""
     is_streaming: bool = False
     is_compacting: bool = False
     is_background_compacting: bool = False
@@ -722,6 +726,10 @@ class BashResult:
     artifact_error: JsonObject | None = None
     minimized: JsonObject | None = None
     working_dir: str | None = None
+    moved_cwd: bool | None = None
+    """The command ended in another directory than it started in; the next command starts in its own cwd."""
+    errexit: bool | None = None
+    """The command ended with `set -e` on; the next command starts with it off."""
     images: tuple[ImageContent, ...] | None = None
     trace: JsonObject | None = None
     """The embedded shell's final `ShellTrace` of the run; only when the caller asked for one."""
@@ -759,6 +767,45 @@ class CompactionResult:
     details: JsonValue | None = None
     preserve_data: JsonObject | None = None
     provider_replay_through_entry_id: str | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class ModelPickerRole:
+    """A role a model holds, as picker rows chip it."""
+    role: str
+    label: str
+    """The role's display tag."""
+    auto: bool | None = None
+    """Auto-selected: the role has no configured model."""
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class ModelPickerRow:
+    """One row of omp's session model picker."""
+    provider: str
+    id: str
+    name: str
+    role: str | None = None
+    """The quick role this row applies (`@` search); pass it to `set_model`."""
+    roles: tuple[ModelPickerRole, ...] | None = None
+    """Visible roles the model holds, built-in order first."""
+    thinking: tuple[ConfiguredThinkingLevel, ...] | None = None
+    """Steps of the model's thinking slider, low to high: `auto`, `off`, then its efforts. Absent when it has no effort to pick."""
+    thinking_level: ConfiguredThinkingLevel | None = None
+    """Model rows: the session's level as this model would run it (the untouched slider). Quick-role rows: the role's explicit level, which `set_model` should carry."""
+    over_context: bool | None = None
+    """The session's context exceeds the model's window."""
+    current: bool | None = None
+    """The session runs this row: its model, or under `@` its active quick role."""
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class ModelPickerResult:
+    rows: tuple[ModelPickerRow, ...]
+    recent: int
+    """Leading rows that are recently used or role-held (the picker's Recent block); 0 when there is no such split."""
+    total: int
+    """Matching rows before `limit`."""
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -1740,11 +1787,12 @@ class FormSection:
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class FormUiRequest:
-    """The whole form of one `ask` tool call; sent only after `set_ask_dialog` enables it with `form: true`."""
+    """Exactly one representation: HTML by default, or parsed sections when the host enables structured forms with set_ask_dialog."""
     type: Literal["extension_ui_request"] = "extension_ui_request"
     id: str
     method: Literal["form"] = "form"
-    sections: tuple[FormSection, ...]
+    html: str | None = None
+    sections: tuple[FormSection, ...] | None = None
     timeout: int | None = None
 
 
@@ -1842,6 +1890,7 @@ class ExtensionUiRequest(ExtensionUiRequestMixin):
     prefill: str | None = None
     prompt_style: bool | None = None
     questions: tuple[AskQuestion, ...] | None = None
+    html: str | None = None
     sections: tuple[FormSection, ...] | None = None
     target_id: str | None = None
     notify_type: NotifyType | None = None
@@ -1897,6 +1946,11 @@ class HostUriSchemeDefinition:
 @dataclass(slots=True, frozen=True, kw_only=True)
 class NegotiateProtocolResult:
     protocol_version: int
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class AbortAndDeliverQueueResult:
+    aborted: bool
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -2282,6 +2336,8 @@ def parse_session_state(value: object, path: str = "SessionState") -> SessionSta
         session_id=required(payload, "sessionId", decode_str, path),
         model=optional(payload, "model", parse_model_info, path),
         thinking_level=optional(payload, "thinkingLevel", _decode_thinking_level, path),
+        configured_thinking_level=optional(payload, "configuredThinkingLevel", _decode_configured_thinking_level, path),
+        thinking_levels=optional(payload, "thinkingLevels", array(_decode_configured_thinking_level), path),
         is_streaming=defaulted(payload, "isStreaming", decode_bool, path, False),
         is_compacting=defaulted(payload, "isCompacting", decode_bool, path, False),
         is_background_compacting=defaulted(payload, "isBackgroundCompacting", decode_bool, path, False),
@@ -2338,6 +2394,8 @@ def parse_bash_result(value: object, path: str = "BashResult") -> BashResult:
         artifact_error=optional(payload, "artifactError", decode_json_object, path),
         minimized=optional(payload, "minimized", decode_json_object, path),
         working_dir=optional(payload, "workingDir", decode_str, path),
+        moved_cwd=optional(payload, "movedCwd", decode_bool, path),
+        errexit=optional(payload, "errexit", decode_bool, path),
         images=optional(payload, "images", array(parse_image_content), path),
         trace=optional(payload, "trace", decode_json_object, path),
         fork=optional(payload, "fork", parse_shell_fork_outcome, path),
@@ -2379,6 +2437,39 @@ def parse_compaction_result(value: object, path: str = "CompactionResult") -> Co
         details=optional(payload, "details", decode_json, path),
         preserve_data=optional(payload, "preserveData", decode_json_object, path),
         provider_replay_through_entry_id=optional(payload, "providerReplayThroughEntryId", decode_str, path),
+    )
+
+
+def parse_model_picker_role(value: object, path: str = "ModelPickerRole") -> ModelPickerRole:
+    payload = expect_object(value, path)
+    return ModelPickerRole(
+        role=required(payload, "role", decode_str, path),
+        label=required(payload, "label", decode_str, path),
+        auto=optional(payload, "auto", decode_bool, path),
+    )
+
+
+def parse_model_picker_row(value: object, path: str = "ModelPickerRow") -> ModelPickerRow:
+    payload = expect_object(value, path)
+    return ModelPickerRow(
+        provider=required(payload, "provider", decode_str, path),
+        id=required(payload, "id", decode_str, path),
+        name=required(payload, "name", decode_str, path),
+        role=optional(payload, "role", decode_str, path),
+        roles=optional(payload, "roles", array(parse_model_picker_role), path),
+        thinking=optional(payload, "thinking", array(_decode_configured_thinking_level), path),
+        thinking_level=optional(payload, "thinkingLevel", _decode_configured_thinking_level, path),
+        over_context=optional(payload, "overContext", decode_bool, path),
+        current=optional(payload, "current", decode_bool, path),
+    )
+
+
+def parse_model_picker_result(value: object, path: str = "ModelPickerResult") -> ModelPickerResult:
+    payload = expect_object(value, path)
+    return ModelPickerResult(
+        rows=required(payload, "rows", array(parse_model_picker_row), path),
+        recent=required(payload, "recent", decode_int, path),
+        total=required(payload, "total", decode_int, path),
     )
 
 
@@ -3466,7 +3557,8 @@ def parse_form_ui_request(value: object, path: str = "FormUiRequest") -> FormUiR
     required(payload, "method", cast('Decoder[Literal["form"]]', literal(frozenset({"form"}))), path)
     return FormUiRequest(
         id=required(payload, "id", decode_str, path),
-        sections=required(payload, "sections", array(parse_form_section), path),
+        html=optional(payload, "html", decode_str, path),
+        sections=optional(payload, "sections", array(parse_form_section), path),
         timeout=optional(payload, "timeout", decode_int, path),
     )
 
@@ -3570,6 +3662,7 @@ def parse_extension_ui_request(value: object, path: str = "ExtensionUiRequest") 
         prefill=optional(payload, "prefill", decode_str, path),
         prompt_style=optional(payload, "promptStyle", decode_bool, path),
         questions=optional(payload, "questions", array(parse_ask_question), path),
+        html=optional(payload, "html", decode_str, path),
         sections=optional(payload, "sections", array(parse_form_section), path),
         target_id=optional(payload, "targetId", decode_str, path),
         notify_type=optional(payload, "notifyType", _decode_notify_type, path),
@@ -3632,6 +3725,13 @@ def parse_negotiate_protocol_result(value: object, path: str = "NegotiateProtoco
     payload = expect_object(value, path)
     return NegotiateProtocolResult(
         protocol_version=required(payload, "protocolVersion", decode_int, path),
+    )
+
+
+def parse_abort_and_deliver_queue_result(value: object, path: str = "AbortAndDeliverQueueResult") -> AbortAndDeliverQueueResult:
+    payload = expect_object(value, path)
+    return AbortAndDeliverQueueResult(
+        aborted=required(payload, "aborted", decode_bool, path),
     )
 
 
@@ -3873,6 +3973,16 @@ class WireClient:
         params: dict[str, object] = {}
         return parse_abort_and_restore_queue_result(self._command("abort_and_restore_queue", params), "abort_and_restore_queue")
 
+    def abort_and_deliver_queue(self) -> AbortAndDeliverQueueResult:
+        """Abort the current run and continue it with the queued user input (the TUI's empty Enter); `aborted` is false when no run was streaming with queued input."""
+        params: dict[str, object] = {}
+        return parse_abort_and_deliver_queue_result(self._command("abort_and_deliver_queue", params), "abort_and_deliver_queue")
+
+    def resume(self) -> None:
+        """Continue the agent (the TUI's `.`/`c` shortcut), interrupting a running turn first; queued input continues the run in place of the continue directive. Acknowledged once the continuation is under way."""
+        params: dict[str, object] = {}
+        self._command("resume", params)
+
     def new_session(self, parent_session: str | None = None) -> CancellationResult:
         """Start a new session."""
         params: dict[str, object] = {}
@@ -4063,11 +4173,15 @@ class WireClient:
         params: dict[str, object] = {}
         return required(expect_object(self._command("dictation_stop", params, timeout=600), "dictation_stop"), "text", decode_str, "dictation_stop")
 
-    def set_model(self, provider: str, model_id: str) -> ModelInfo:
+    def set_model(self, provider: str, model_id: str, *, thinking_level: ConfiguredThinkingLevel | None = None, role: str | None = None) -> ModelInfo:
         """Select a model by provider and id."""
         params: dict[str, object] = {}
         params["provider"] = provider
         params["modelId"] = model_id
+        if thinking_level is not None:
+            params["thinkingLevel"] = thinking_level
+        if role is not None:
+            params["role"] = role
         return parse_model_info(self._command("set_model", params), "set_model")
 
     def cycle_model(self) -> ModelCycleResult | None:
@@ -4122,7 +4236,16 @@ class WireClient:
             params["timeoutMs"] = timeout_ms
         return required(expect_object(self._command("discover_provider_models", params, timeout=30), "discover_provider_models"), "models", array(parse_discovered_model), "discover_provider_models")
 
-    def set_thinking_level(self, level: ThinkingLevel) -> None:
+    def get_model_picker(self, *, query: str | None = None, limit: int | None = None) -> ModelPickerResult:
+        """Model picker rows ordered and ranked as omp's session model picker shows them; a query starting with `@` lists quick roles."""
+        params: dict[str, object] = {}
+        if query is not None:
+            params["query"] = query
+        if limit is not None:
+            params["limit"] = limit
+        return parse_model_picker_result(self._command("get_model_picker", params), "get_model_picker")
+
+    def set_thinking_level(self, level: ConfiguredThinkingLevel) -> None:
         """Set the thinking level."""
         params: dict[str, object] = {}
         params["level"] = level
@@ -4604,6 +4727,7 @@ class WireClient:
 
 
 __all__ = [
+    "AbortAndDeliverQueueResult",
     "AbortAndRestoreQueueResult",
     "AdvisorCostChangedEvent",
     "AdvisorYieldedEvent",
@@ -4734,6 +4858,9 @@ __all__ = [
     "ModelCost",
     "ModelCycleResult",
     "ModelInfo",
+    "ModelPickerResult",
+    "ModelPickerRole",
+    "ModelPickerRow",
     "NavigateTreeResult",
     "NegotiateProtocolResult",
     "NoticeEvent",
@@ -4828,6 +4955,7 @@ __all__ = [
     "UserContent",
     "UserMessage",
     "WidgetPlacement",
+    "parse_abort_and_deliver_queue_result",
     "parse_abort_and_restore_queue_result",
     "parse_advisor_cost_changed_event",
     "parse_advisor_yielded_event",
@@ -4939,6 +5067,9 @@ __all__ = [
     "parse_model_cost",
     "parse_model_cycle_result",
     "parse_model_info",
+    "parse_model_picker_result",
+    "parse_model_picker_role",
+    "parse_model_picker_row",
     "parse_navigate_tree_result",
     "parse_negotiate_protocol_result",
     "parse_notice_event",

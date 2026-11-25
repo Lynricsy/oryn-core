@@ -36,7 +36,7 @@ describe.skipIf(!e2eApiKey("ANTHROPIC_API_KEY"))("RPC mode", () => {
 	beforeEach(() => {
 		sessionDir = path.join(os.tmpdir(), `omp-rpc-test-${Snowflake.next()}`);
 		client = new RpcClient({
-			cliPath: path.join(import.meta.dir, "..", "dist", "cli.js"),
+			command: [process.execPath, path.join(import.meta.dir, "..", "dist", "cli.js")],
 			cwd: path.join(import.meta.dir, ".."),
 			env: { PI_CODING_AGENT_DIR: sessionDir },
 			provider: "anthropic",
@@ -67,14 +67,14 @@ describe.skipIf(!e2eApiKey("ANTHROPIC_API_KEY"))("RPC mode", () => {
 		await client.start();
 
 		const enabled = await client.setFastMode(true);
-		expect(enabled).toEqual({ enabled: true, active: true });
+		expect(enabled).toEqual({ enabled: true, active: true, ultrafast: false });
 
 		const stateWhileEnabled = await client.getState();
 		expect(stateWhileEnabled.fastModeEnabled).toBe(true);
 		expect(stateWhileEnabled.fastModeActive).toBe(true);
 
 		const disabled = await client.setFastMode(false);
-		expect(disabled).toEqual({ enabled: false, active: false });
+		expect(disabled).toEqual({ enabled: false, active: false, ultrafast: false });
 
 		const stateWhileDisabled = await client.getState();
 		expect(stateWhileDisabled.fastModeEnabled).toBe(false);
@@ -326,7 +326,7 @@ describe("RPC fast mode with unsupported Fireworks model and priority tier", () 
 		// Startup discovery stays inside the temp dir: the developer's home and this repo's
 		// context, plugins, and model caches are not part of the contract and slow the cold start.
 		client = new RpcClient({
-			cliPath: path.join(import.meta.dir, "..", "src", "cli.ts"),
+			command: [process.execPath, path.join(import.meta.dir, "..", "src", "cli.ts")],
 			cwd: sessionDir,
 			env: {
 				HOME: path.join(sessionDir, "home"),

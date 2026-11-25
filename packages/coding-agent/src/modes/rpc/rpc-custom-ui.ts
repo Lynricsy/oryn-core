@@ -1,96 +1,132 @@
 /**
- * Renders TUI components for an RPC host in its own terminal view. A host that
- * opted into interactive terminals (`terminal_configure`) gets a virtual
- * terminal per component: a {@link TUI} paints into it, and the host's
- * keystrokes and size flow back. This is what lets `ui.custom()` extension UIs
- * and fullscreen TUI overlays work in the GUI instead of resolving empty.
+ * Renders reactive pi-tui views and legacy extension components for an RPC host
+ * in its own virtual terminal. A host that opted into interactive terminals
+ * (`terminal_configure`) gets a virtual terminal per view: a {@link TermBackend}
+ * paints into it via {@link FrameWriter}, and the host's keystrokes and size
+ * flow back. This lets `ui.custom()` extension UIs and fullscreen TUI overlays
+ * work in the GUI instead of resolving empty.
  */
-import { type Component, type OverlayHandle, type Terminal, TUI } from "@oh-my-pi/pi-tui";
-import { KeybindingsManager } from "@oh-my-pi/pi-tui/app-keybindings";
-import type { TerminalAppearance, TerminalAppearanceRequestToken } from "@oh-my-pi/pi-tui/terminal";
-import { type Theme, theme } from "@oh-my-pi/pi-tui/theme";
-import type { ExtensionCustomOptions } from "../../extensibility/extensions/types";
+import { createSurface, type Surface, signal, type UiNode } from "@oh-my-pi/pi-tui";
+import type { FramePlan, InputEvent, TerminalCapabilities, TerminalDriver } from "@oh-my-pi/pi-tui/driver/contract";
+import { decodeInput } from "@oh-my-pi/pi-tui/driver/input/decoder";
+import { FrameWriter } from "@oh-my-pi/pi-tui/driver/output/writer";
+import { TermBackend } from "@oh-my-pi/pi-tui/term/backend";
+import { currentTheme } from "@oh-my-pi/pi-tui/theme/runtime";
+import { KeybindingsManager } from "../../config/keybindings/keybindings";
+import type {
+	ExtensionCustomFactory,
+	ExtensionCustomOptions,
+	ExtensionUiHost,
+} from "../../extensibility/extensions/types";
+import { extensionOutput, extensionTheme, singleNode } from "../../ui/extensions/render-output";
+import { extensionOverlay } from "../controllers/extension-ui-blocks";
 import type { RpcTerminalHost, VirtualTerminalHandle } from "./rpc-terminal";
 
-/** {@link Terminal} over a host terminal view: writes become terminal output, host input drives the TUI. */
-class HostedTerminal implements Terminal {
+const VIRTUAL_CAPABILITIES: TerminalCapabilities = {
+	truecolor: true,
+	colors: 16_777_216,
+	synchronizedOutput: false,
+	hyperlinks: true,
+	textSizing: false,
+	images: null,
+	kittyKeyboard: false,
+	bracketedPaste: false,
+	background: null,
+	dark: true,
+	cell: null,
+	multiplexer: null,
+	tsp: false,
+};
+
+/** {@link TerminalDriver} backed by a host virtual terminal handle. */
+class HostedTerminalDriver implements TerminalDriver {
 	#handle: VirtualTerminalHandle | undefined;
-	#onInput: ((data: string) => void) | undefined;
-	#onResize: (() => void) | undefined;
+	#writer: FrameWriter | undefined;
+	readonly #inputListeners = new Set<(event: InputEvent) => void>();
+	readonly #resizeListeners = new Set<(columns: number, rows: number) => void>();
 
-	attach(handle: VirtualTerminalHandle): void {
-		this.#handle = handle;
-	}
+	readonly capabilities: TerminalCapabilities = VIRTUAL_CAPABILITIES;
 
-	input(data: string): void {
-		this.#onInput?.(data);
-	}
-
-	resized(): void {
-		this.#onResize?.();
-	}
-
-	start(onInput: (data: string) => void, onResize: () => void): void {
-		this.#onInput = onInput;
-		this.#onResize = onResize;
-	}
-	stop(): void {
-		this.#onInput = undefined;
-		this.#onResize = undefined;
-	}
-	async drainInput(): Promise<void> {}
-	write(data: string): void {
-		this.#handle?.write(data);
-	}
 	get columns(): number {
 		return this.#handle?.cols ?? 100;
 	}
+
 	get rows(): number {
 		return this.#handle?.rows ?? 30;
 	}
-	get kittyProtocolActive(): boolean {
-		return false;
+
+	attach(handle: VirtualTerminalHandle): void {
+		this.#handle = handle;
+		this.#writer = new FrameWriter({
+			sink: {
+				write: data => this.#handle?.write(data),
+				flush: async () => {},
+			},
+			columns: this.columns,
+			rows: this.rows,
+			synchronizedOutput: () => false,
+			multiplexer: () => false,
+		});
 	}
-	get kittyEnableSequence(): string | null {
-		return null;
+
+	input(data: string): void {
+		for (const event of decodeInput(data, { kitty: false })) {
+			for (const listener of this.#inputListeners) listener(event);
+		}
 	}
-	moveBy(lines: number): void {
-		if (lines > 0) this.write(`\x1b[${lines}B`);
-		else if (lines < 0) this.write(`\x1b[${-lines}A`);
+
+	resized(): void {
+		const cols = this.columns;
+		const rows = this.rows;
+		this.#writer?.resize(cols, rows);
+		for (const listener of this.#resizeListeners) listener(cols, rows);
 	}
-	hideCursor(): void {
-		this.write("\x1b[?25l");
+
+	async start(): Promise<void> {
+		this.#writer?.start({ row: 0, col: 0 });
 	}
-	showCursor(): void {
-		this.write("\x1b[?25h");
+
+	async stop(): Promise<void> {
+		this.#writer?.stop();
 	}
-	clearLine(): void {
-		this.write("\x1b[K");
+
+	present(frame: FramePlan): number | undefined {
+		return this.#writer?.present(frame);
 	}
-	clearFromCursor(): void {
-		this.write("\x1b[J");
+
+	writeRaw(data: string): void {
+		this.#handle?.write(data);
 	}
-	clearScreen(): void {
-		this.write("\x1b[H\x1b[0J");
+
+	onInput(listener: (event: InputEvent) => void): () => void {
+		this.#inputListeners.add(listener);
+		return () => this.#inputListeners.delete(listener);
 	}
+
+	onResize(listener: (columns: number, rows: number) => void): () => void {
+		this.#resizeListeners.add(listener);
+		return () => this.#resizeListeners.delete(listener);
+	}
+
+	onCapabilities(): () => void {
+		return () => {};
+	}
+
+	onReplay(): () => void {
+		return () => {};
+	}
+
+	resetDisplay(): void {
+		this.#handle?.write("\x1b[2J\x1b[H");
+	}
+
 	setTitle(): void {}
-	setProgress(): void {}
-	onAppearanceChange(): void {}
-	refreshAppearance(_requestToken?: TerminalAppearanceRequestToken): void {}
-	get appearance(): TerminalAppearance | undefined {
-		return undefined;
-	}
 }
 
-export type HostedComponentFactory<T> = (
-	tui: TUI,
-	theme: Theme,
-	keybindings: KeybindingsManager,
-	done: (result: T) => void,
-) => (Component & { dispose?(): void }) | Promise<Component & { dispose?(): void }>;
+export type HostedComponentFactory<T> = ExtensionCustomFactory<T>;
 
 /**
- * Show `factory`'s component in a new host terminal until it calls `done`.
+ * Show `factory`'s view in a new host terminal until it calls `done`.
  * Closing the terminal resolves `undefined`, the cancel every TUI picker reports.
  */
 export function showHostedComponent<T>(
@@ -104,55 +140,80 @@ export function showHostedComponent<T>(
 		reject(options.signal.reason ?? new DOMException("Dialog aborted", "AbortError"));
 		return promise;
 	}
-	const terminal = new HostedTerminal();
-	const ui = new TUI(terminal);
-	let component: (Component & { dispose?(): void }) | undefined;
-	let overlayHandle: OverlayHandle | undefined;
+	const driver = new HostedTerminalDriver();
+	const revision = signal(0);
+	let backend: TermBackend | undefined;
+	let surface: Surface | undefined;
 	let closed = false;
+
 	const finish = (settle: () => void) => {
 		if (closed) return;
 		closed = true;
 		options?.signal?.removeEventListener("abort", onAbort);
 		try {
-			component?.dispose?.();
-			overlayHandle?.hide();
-			ui.stop();
+			backend?.stop();
+			surface?.dispose();
+			void driver.stop();
 		} finally {
 			handle.finish();
 			settle();
 		}
 	};
+
 	const onAbort = () =>
 		finish(() => reject(options?.signal?.reason ?? new DOMException("Dialog aborted", "AbortError")));
+
 	const handle = host.openVirtual(title, {
-		onInput: data => terminal.input(data),
-		onResize: () => terminal.resized(),
+		onInput: data => driver.input(data),
+		onResize: () => driver.resized(),
 		onClose: () => finish(() => resolve(undefined as T)),
 	});
-	terminal.attach(handle);
+	driver.attach(handle);
+	void driver.start();
 	options?.signal?.addEventListener("abort", onAbort, { once: true });
-	ui.start();
-	Promise.try(() => factory(ui, theme, KeybindingsManager.inMemory(), result => finish(() => resolve(result))))
-		.then(created => {
+
+	const uiHost: ExtensionUiHost = {
+		requestRender: () => revision.set(revision.peek() + 1),
+		size: () => ({ columns: driver.columns, rows: driver.rows }),
+		suspend: async run => run(),
+	};
+
+	Promise.try(() =>
+		factory(uiHost, extensionTheme(currentTheme()), KeybindingsManager.inMemory(), result =>
+			finish(() => resolve(result)),
+		),
+	)
+		.then(output => {
 			if (closed) {
-				created.dispose?.();
+				if (output && typeof output === "object" && "dispose" in output) output.dispose?.();
 				return;
 			}
-			component = created;
-			if (options?.overlay) {
-				const overlayOptions =
-					typeof options.overlayOptions === "function" ? options.overlayOptions() : options.overlayOptions;
-				overlayHandle = ui.showOverlay(
-					created,
-					overlayOptions ?? { anchor: "bottom-center", width: "100%", maxHeight: "100%", margin: 0 },
-				);
-				options.onHandle?.(overlayHandle);
-			} else {
-				ui.addChild(created);
-				ui.setFocus(created);
-			}
-			ui.requestRender();
+			let contentNode: UiNode | undefined;
+			surface = createSurface(() => {
+				const node = singleNode(extensionOutput(output, { revision, input: true }) ?? []);
+				contentNode = node;
+				if (options?.overlay) {
+					return { layer: extensionOverlay(node, options.fullscreen === true, false) };
+				}
+				return { dock: node };
+			});
+			const focusTarget = contentNode ?? surface.layer()[0] ?? surface.dock()[0] ?? null;
+			surface.focus(focusTarget);
+			backend = new TermBackend({
+				surface,
+				driver,
+				theme: currentTheme,
+				frameInterval: 1,
+			});
+			backend.start();
+			options?.onHandle?.({
+				get closed() {
+					return closed;
+				},
+				close: () => finish(() => resolve(undefined as T)),
+			});
 		})
 		.catch((error: unknown) => finish(() => reject(error)));
+
 	return promise;
 }

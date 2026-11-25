@@ -104,6 +104,7 @@ export async function runRpcOmfg(
 		sessionManager: session.sessionManager,
 		settings: session.settings,
 		ui: { requestRender: () => {} },
+		shell: { dock: { slot: () => ({ set: () => {}, clear: () => {} }) } },
 		omfgContainer: { clear: () => {}, addChild: (component: OmfgPanelComponent) => mirror.attach(component) },
 		showStatus: (message: string) => {
 			diagnostic = message;

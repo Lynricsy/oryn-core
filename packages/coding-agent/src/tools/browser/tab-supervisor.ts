@@ -14,13 +14,13 @@ import { resolveImageMaxEdge, resolveImageTokenization } from "@oh-my-pi/pi-cata
 import type { CDPSession, Page, Target, Viewport } from "puppeteer-core";
 import { callSessionTool } from "../../eval/js/tool-bridge";
 import { TOOL_TIMEOUTS } from "../tool-timeouts";
-import { webpExclusionForModel } from "@oh-my-pi/pi-tui/chat/image-loading";
+import { webpExclusionForModel } from "../../utils/image-input";
 import hiddenFramesNotice from "../../prompts/tools/browser-hidden-frames.md" with { type: "text" };
 import type { ToolSession } from "../index";
 import { expandPath } from "../path-utils";
 import { CELL_BUDGET_SLACK_MS } from "../run-scope";
 import { ToolAbortError, toWorkerErrorPayload } from "../tool-errors";
-import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
+import { ToolError } from "../tool-errors";
 import { gracefulKillTreeOnce, isChromiumBrowserExecutable, pickElectronTarget } from "./attach";
 import type * as Cmux from "./cmux/cmux-tab";
 import { CmuxUnavailableError, mapWaitUntil } from "./cmux/rpc";
@@ -48,7 +48,7 @@ import {
 	type TernBrowserHandle,
 	type WebKitBrowserHandle,
 } from "./registry";
-import { isLoopbackRelayUrl } from "./relay/daemon";
+import { isLoopbackRelayUrl } from "./relay/kind";
 import { FOREIGN_FRAME_REFUSAL, type HiddenFrame } from "./relay/protocol";
 import {
 	type AttachPage,
@@ -1792,8 +1792,8 @@ export async function releaseTab(name: string, opts: ReleaseTabOptions = {}): Pr
 		if (!opts.keepPage && joined === "kept" && tab.backend === "worker") {
 			// The first release already decided to keep the page and may have disconnected.
 			// Reconnect to its browser, not a same-name tab which could now belong to another caller;
-			// a close never starts or replaces the relay that kept the page.
-			const browser = await acquireBrowser(tab.browser.kind, { cwd: getProjectDir(), startRelay: false });
+			// a close never restarts the relay that kept the page.
+			const browser = await acquireBrowser(tab.browser.kind, { cwd: getProjectDir(), restartRelay: false });
 			holdBrowser(browser);
 			try {
 				const timeoutMs = opts.timeoutMs ?? DEFAULT_TAB_CLOSE_TIMEOUT_MS;
@@ -1957,8 +1957,7 @@ async function releaseTabInner(tab: TabSession, name: string, opts: ReleaseTabOp
 	// Close a live tab's owned page by id as well, which confirms it is gone: a worker's own
 	// close can fail and still report `closed` (its CDP socket broke), and the relay retracts a
 	// target whose debugger the user dismissed, so the worker cannot close it at all. A dead
-	// tab's page was closed by the teardown that killed it. A reattached live tab's adopted
-	// page is covered here too. No other connection can see a connection-scoped page,
+	// tab's page was closed by the teardown that killed it. No other connection can see a connection-scoped page,
 	// which closed with the worker's connection.
 	if (closesPage && wasAlive && !tab.connectionScoped) {
 		try {

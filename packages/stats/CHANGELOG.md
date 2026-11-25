@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- The overview and per-model cache hit rates count cache writes in the total prompt size.
+## [19.1.1] - 2026-11-23
+
+### Added
+
+- Added `readDailyActivity()` for reading stored daily activity without being blocked by another process writing to the stats database; it returns `null` when no stats database exists.
+
+### Fixed
+
+- Fixed Spotlight baseline and adjusted-net calculations to use consistent result sets, improving headline and step-row accuracy.
+
 ## [19.0.1] - 2026-11-19
 
 ### Added

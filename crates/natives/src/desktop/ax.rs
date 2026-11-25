@@ -1361,7 +1361,7 @@ pub(super) fn snapshot(
 		}
 		let _ = write!(text, "… skipped {} unreadable nodes", state.skipped);
 	}
-	Ok(AxSnapshot { text, node_count, truncated: state.truncated })
+	Ok(AxSnapshot { text, node_count, truncated: state.truncated, covered: false })
 }
 
 /// How many elements `find()` reads; bounds its work.
@@ -1962,6 +1962,19 @@ pub(crate) fn truncate_chars(value: String, max: usize) -> String {
 	let mut result: String = value.chars().take(max.saturating_sub(1)).collect();
 	result.push('…');
 	result
+}
+
+/// A number as `Display` writes it, or in scientific notation where that would
+/// run past 24 characters (`f64::MAX` has 309 digits), the longest an `f64`
+/// takes in scientific notation: an extreme value an app publishes stays short.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn bounded_number<T: std::fmt::Display + std::fmt::LowerExp>(value: T) -> String {
+	let text = value.to_string();
+	if text.len() <= 24 {
+		text
+	} else {
+		format!("{value:e}")
+	}
 }
 
 /// Query aliases extend the vocabulary without changing printed roles or their

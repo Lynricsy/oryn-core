@@ -1,4 +1,4 @@
-import type { LoopLimitRuntime } from "@oh-my-pi/pi-tui/status-line/loop";
+import type { LoopLimitRuntime } from "../view-model/status-line/loop";
 /**
  * Session-mode controllers for RPC mode (vibe / goal / loop).
  *

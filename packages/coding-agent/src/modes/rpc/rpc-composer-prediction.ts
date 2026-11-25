@@ -36,10 +36,9 @@ export class RpcComposerPrediction {
 				viewSession: session,
 				focusedAgentId: undefined,
 				// The host checked its own draft before asking.
-				editor: { getText: () => "" },
-				ui: { requestRender: () => this.#announce() },
+				composer: { text: () => "" },
 			},
-			options,
+			{ ...options, onChange: () => this.#announce() },
 		);
 	}
 

@@ -17,7 +17,7 @@ import {
 	TODO_HUD_STATE_CUSTOM_TYPE,
 	USER_TODO_EDIT_CUSTOM_TYPE,
 } from "@oh-my-pi/pi-coding-agent/tools/todo";
-import type { TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
+import type { TodoPhase } from "../src/tools/details/todo";
 import { TempDir } from "@oh-my-pi/pi-utils";
 
 describe("session todo auto-clear", () => {

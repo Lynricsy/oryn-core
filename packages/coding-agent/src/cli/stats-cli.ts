@@ -4,9 +4,9 @@
  * Handles `omp stats` subcommand for viewing AI usage statistics.
  */
 
-import { formatKeyHint } from "@oh-my-pi/pi-tui/key-hint-format";
-import { truncateToWidth } from "@oh-my-pi/pi-tui/utils";
 import { $env, postmortem } from "@oh-my-pi/pi-utils";
+import { formatKeyHint } from "../ui/keys/hints";
+import { truncateToWidth } from "../utils/text-width";
 import chalk from "@oh-my-pi/pi-utils/chalk";
 import { openStandaloneJudge } from "../judgment/standalone";
 import { startParentWatchdog } from "../subprocess/parent-watchdog";

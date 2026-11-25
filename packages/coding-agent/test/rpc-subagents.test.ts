@@ -13,7 +13,7 @@ import {
 import { RpcSubagentRegistry, readRpcSubagentTranscript } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-subagents";
 import type { RpcSubagentFrame } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-types";
 import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
-import { type AgentProgress } from "@oh-my-pi/pi-tui/tools/task";
+import { type AgentProgress } from "@oh-my-pi/pi-coding-agent/task/task-details";
 import {
 	type SubagentEventPayload,
 	type SubagentLifecyclePayload,
@@ -677,7 +677,7 @@ function handle(frame) {
 `,
 		);
 
-		using client = new RpcClient({ cliPath: scriptPath });
+		using client = new RpcClient({ command: [process.execPath, scriptPath] });
 		const lifecycleIds: string[] = [];
 		const progressTasks: string[] = [];
 		const rawEventTypes: string[] = [];
