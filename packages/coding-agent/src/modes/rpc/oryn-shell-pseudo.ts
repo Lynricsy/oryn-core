@@ -19,7 +19,7 @@ import {
 	defaultShellVizPreferences,
 	readShellPresentation,
 	shellVisualization,
-} from "@oh-my-pi/pi-tui/tools/shell-viz";
+} from "../../tools/shell-viz";
 import { isShellTrace, type ShellTrace, type ShellVizPresentation } from "@oh-my-pi/pi-wire";
 import type { AgentSessionEvent } from "../../session/agent-session";
 

@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import { RunTrace, Shell } from "@oh-my-pi/pi-natives";
-import { attachShellTrace } from "@oh-my-pi/pi-tui/tools/shell-viz";
+import { attachShellTrace } from "../src/tools/shell-viz";
 import { isShellTrace, type ShellTrace } from "@oh-my-pi/pi-wire";
 import { type OrynPseudo, OrynShellPseudoProjector } from "../src/modes/rpc/oryn-shell-pseudo";
 import type { AgentSessionEvent } from "../src/session/agent-session";

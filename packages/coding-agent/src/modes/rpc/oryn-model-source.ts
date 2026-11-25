@@ -9,7 +9,7 @@
  */
 import type { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import type { Model } from "@oh-my-pi/pi-ai";
-import type { ModelRoleLookup } from "@oh-my-pi/pi-tui/overlays/model-browser";
+import type { ModelRoleLookup } from "../view-model/overlays/model-browser";
 import { normalizeModelPatternList, resolveExplicitModelRole } from "../../config/model-resolver";
 import type { AgentSession } from "../../session/agent-session";
 

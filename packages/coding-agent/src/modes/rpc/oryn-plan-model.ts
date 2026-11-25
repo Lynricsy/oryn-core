@@ -20,8 +20,8 @@
 import * as path from "node:path";
 import type { Model } from "@oh-my-pi/pi-ai";
 import { modelsAreEqual } from "@oh-my-pi/pi-catalog/models";
-import type { ModelRoleLookup } from "@oh-my-pi/pi-tui/overlays/model-browser";
-import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
+import type { ModelRoleLookup } from "../view-model/overlays/model-browser";
+import type { ConfiguredThinkingLevel } from "../../utils/render-utils";
 import type { ResolvedModelRoleValue } from "../../config/model-resolver";
 import { resolvePlanModelTransition } from "../../plan-mode/model-transition";
 import type { AgentSession } from "../../session/agent-session";
