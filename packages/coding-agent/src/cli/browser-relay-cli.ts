@@ -10,16 +10,27 @@ import { installRelayExtension, registeredRelayExtensionIds, syncRelayInstalls }
 import { runNativeHost } from "../tools/browser/relay/native-host";
 import { registerRelayNativeHost } from "../tools/browser/relay/native-host-manifest";
 import { installRelayInChrome } from "../tools/browser/relay/chrome";
+import { type RelayServer, startRelayServer } from "../tools/browser/relay/server";
 
 /** Subcommands supported by `omp browser-relay`. */
-export const BROWSER_RELAY_ACTIONS = ["install", "sync", "native-host"] as const;
+export const BROWSER_RELAY_ACTIONS = ["install", "sync", "native-host", "serve"] as const;
 
 /** Selected browser-relay subcommand. */
 export type BrowserRelayAction = (typeof BROWSER_RELAY_ACTIONS)[number];
 
+/** Default port of the standalone relay server (used by `serve` / Oryn M27). */
+export const DEFAULT_RELAY_PORT = 18800;
 /** Parsed browser-relay command and options. */
 export interface BrowserRelayCommandArgs {
 	action: BrowserRelayAction;
+	/** Standalone relay listen port (serve; default DEFAULT_RELAY_PORT). */
+	port?: number;
+	/** Shared secret token required on `/ext?token=` (serve). */
+	token?: string;
+	/** Gather agent-driven tabs into a Chrome tab group (serve; default true). */
+	group?: boolean;
+	/** Log relay events to stderr (serve). */
+	verbose?: boolean;
 	/** Install target directory; defaults to ~/.omp/browser-relay/extension. */
 	dir?: string;
 	/** Install into real Chrome profiles (default true; `--no-chrome` falls back to the manual steps). */
@@ -28,7 +39,7 @@ export interface BrowserRelayCommandArgs {
 	profile?: string;
 }
 
-/** Run a relay lifecycle command or the native messaging host. */
+/** Run a relay lifecycle command, the native messaging host, or the standalone relay server. */
 export async function runBrowserRelayCommand(args: BrowserRelayCommandArgs): Promise<void> {
 	switch (args.action) {
 		case "install":
@@ -37,7 +48,33 @@ export async function runBrowserRelayCommand(args: BrowserRelayCommandArgs): Pro
 			return runSync();
 		case "native-host":
 			return runNativeHost();
+		case "serve":
+			return runServe(args);
 	}
+}
+
+async function runServe(args: BrowserRelayCommandArgs): Promise<void> {
+	const port = args.port ?? DEFAULT_RELAY_PORT;
+	const log = args.verbose
+		? (message: string, data?: Record<string, unknown>) => {
+				console.error(`[relay] ${message}${data ? ` ${JSON.stringify(data)}` : ""}`);
+			}
+		: undefined;
+	const relay: RelayServer = startRelayServer({
+		port,
+		token: args.token,
+		group: args.group !== false,
+		log,
+	});
+	console.log(`omp browser relay listening on http://127.0.0.1:${relay.port}`);
+	console.log(`  extension endpoint  ws://127.0.0.1:${relay.port}/ext${args.token ? "?token=***" : ""}`);
+	const shutdown = () => {
+		relay.stop();
+		process.exit(0);
+	};
+	process.on("SIGINT", shutdown);
+	process.on("SIGTERM", shutdown);
+	await new Promise<never>(() => {});
 }
 
 async function runSync(): Promise<void> {

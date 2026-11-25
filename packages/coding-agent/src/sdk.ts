@@ -941,6 +941,11 @@ export interface CreateAgentSessionOptions {
 	 * and ambient custom tools remain disabled. Default: false.
 	 */
 	allowRestrictedCustomTools?: boolean;
+	/**
+	 * Permit MCP discovery and manager-owned MCP tools inside a restricted session (`--no-tools --allow-mcp`).
+	 * Extensions, ambient custom tools, memory, and Auto-QA remain disabled. Default: false.
+	 */
+	allowRestrictedMcp?: boolean;
 
 	/** Output schema for structured completion (subagents). */
 	outputSchema?: unknown;
@@ -2990,8 +2995,9 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			evalActive: activeToolNames.has("eval"),
 		});
 
-		// Restricted sessions cannot inherit or discover MCP capabilities.
-		const enableMCP = !restrictToolNames && (options.enableMCP ?? true);
+		// Restricted sessions cannot inherit or discover MCP capabilities unless explicitly allowed.
+		const allowRestrictedMcp = options.allowRestrictedMcp === true;
+		const enableMCP = (!restrictToolNames || allowRestrictedMcp) && (options.enableMCP ?? true);
 		// Daemon-hosted MCP servers (see mcp/host/contract.ts). The mode is process
 		// state read whenever a server is attached, so like the shared-LSP mode below
 		// only a session that binds process state holds it, until disposed. Taken
@@ -4039,11 +4045,16 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 				? []
 				: (options.customTools?.filter(tool => !isLegacyBuiltinToolDefinition(tool)) ?? []);
 		const explicitCustomToolNames = new Set(explicitCustomTools.map(tool => tool.name));
-		const sdkMcpTools = restrictToolNames
-			? []
-			: (options.mcpTools ?? []).filter(tool => !explicitCustomToolNames.has(tool.name));
+		const sdkMcpTools =
+			restrictToolNames && !allowRestrictedMcp
+				? []
+				: (options.mcpTools ?? []).filter(tool => !explicitCustomToolNames.has(tool.name));
+		const restrictedDiscoveredMcpTools =
+			restrictToolNames && allowRestrictedMcp
+				? initialMcpManagerTools.filter(tool => !explicitCustomToolNames.has(tool.name))
+				: [];
 		initialMcpManagerTools.push(...sdkMcpTools);
-		const sdkCustomTools = [...sdkMcpTools, ...explicitCustomTools];
+		const sdkCustomTools = [...restrictedDiscoveredMcpTools, ...sdkMcpTools, ...explicitCustomTools];
 		const sdkCustomToolNames = new Set(sdkCustomTools.map(tool => tool.name));
 		const allCustomTools = [
 			...registeredTools,
@@ -4121,16 +4132,18 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 		const reconcileSettingsGatedCustomTools = async (): Promise<{ added: Tool[]; removed: string[] }> => {
 			const added: Tool[] = [];
 			const removed: string[] = [];
-			if (restrictToolNames) return { added, removed };
 			const wanted: CustomTool[] = [];
 			// Image generation also honors an explicit tool whitelist: custom tools are
 			// force-activated, so `--no-tools` or a list without `generate_image` must
-			// keep it out (issue #5305).
-			const imageGenRequested = !options.toolNames || options.toolNames.includes("generate_image");
+			// keep it out (issue #5305). Restricted sessions still admit `generate_image`
+			// when the caller explicitly names it in `--tools`.
+			const imageGenRequested = restrictToolNames
+				? options.toolNames?.includes("generate_image") === true
+				: !options.toolNames || options.toolNames.includes("generate_image");
 			if (cfgGenerateImageEnabled.get(settings) && imageGenRequested) {
 				wanted.push(imageGenTool as unknown as CustomTool);
 			}
-			if (cfgSpeechgenEnabled.get(settings)) wanted.push(ttsTool as unknown as CustomTool);
+			if (!restrictToolNames && cfgSpeechgenEnabled.get(settings)) wanted.push(ttsTool as unknown as CustomTool);
 			const wantedNames = new Set(wanted.map(tool => tool.name));
 			for (const [name, entry] of settingsGatedCustomEntries) {
 				if (wantedNames.has(name)) continue;
@@ -4773,7 +4786,11 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 		// Custom tools and extension-registered tools are always included
 		// unless the effective registry winner is hidden / defaultInactive. Restricted callers own the list.
 		const alwaysInclude: string[] = restrictToolNames
-			? []
+			? [
+					...restrictedDiscoveredMcpTools.map(t => t.name),
+					...sdkMcpTools.map(t => t.name),
+					...settingsGatedCustomEntries.keys(),
+				].filter(name => !defaultInactiveToolNames.has(name))
 			: [
 					...sdkCustomTools.map(t => t.name),
 					...registeredTools.map(t => t.definition.name),

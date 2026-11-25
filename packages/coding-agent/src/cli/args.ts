@@ -84,6 +84,8 @@ export interface Args {
 	models?: string[];
 	tools?: string[];
 	noTools?: boolean;
+	/** Allow MCP discovery and tools even when `--no-tools` restricts built-in tools (Oryn coordinator/research). */
+	allowMcp?: boolean;
 	/** Tool-free conversation session (stamps `kind:"chat"` on the session header). */
 	chat?: boolean;
 	noLsp?: boolean;
@@ -389,6 +391,8 @@ export function parseArgs(inputArgs: string[], extensionFlags?: Map<string, { ty
 			result.chat = true;
 		} else if (arg === "--no-tools") {
 			result.noTools = true;
+		} else if (arg === "--allow-mcp") {
+			result.allowMcp = true;
 		} else if (arg === "--no-lsp") {
 			result.noLsp = true;
 		} else if (arg === "--no-pty") {

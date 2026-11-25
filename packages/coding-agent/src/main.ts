@@ -1923,10 +1923,13 @@ export async function buildSessionOptions(
 		options.toolNames = parsed.tools && parsed.tools.length > 0 ? parsed.tools : [];
 		options.restrictToolNames = true;
 	} else if (parsed.noTools) {
-		// `--tools` is the whole tool surface: no MCP, extensions, custom tools,
+		// `--tools` is the whole tool surface: no MCP (unless `--allow-mcp`), extensions, custom tools,
 		// memory, auto-learn or Auto-QA, and subagents inherit the restriction.
 		options.toolNames = parsed.tools && parsed.tools.length > 0 ? parsed.tools : [];
 		options.restrictToolNames = true;
+		if (parsed.allowMcp) {
+			options.allowRestrictedMcp = true;
+		}
 		// The restricted session would not bind them; do not run their factories either.
 		options.disableExtensionDiscovery = true;
 	} else if (parsed.tools) {
