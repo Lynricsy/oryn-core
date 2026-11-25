@@ -768,6 +768,8 @@ type BashExecutionMessage struct {
 	Images             []ImageContent             `json:"images,omitempty"`
 	Meta               map[string]json.RawMessage `json:"meta,omitempty"`
 	ExcludeFromContext *bool                      `json:"excludeFromContext,omitempty"`
+	MovedCwd           *bool                      `json:"movedCwd,omitempty"`
+	Errexit            *bool                      `json:"errexit,omitempty"`
 	// Extra holds undeclared keys and declared keys whose value did not decode (that field stays zero).
 	// Encoding writes them back, over a declared field with the same key.
 	Extra map[string]json.RawMessage `json:"-"`
@@ -790,6 +792,8 @@ func (v *BashExecutionMessage) decodeFrom(raw map[string]json.RawMessage) error 
 	d.optional("images", &out.Images)
 	d.optional("meta", &out.Meta)
 	d.optional("excludeFromContext", &out.ExcludeFromContext)
+	d.optional("movedCwd", &out.MovedCwd)
+	d.optional("errexit", &out.Errexit)
 	out.Extra = d.rest()
 	if d.err != nil {
 		return d.err

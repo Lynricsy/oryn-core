@@ -167,6 +167,8 @@ export interface BashExecutionMessage {
 	images?: ImageContent[];
 	meta?: Record<string, unknown>;
 	excludeFromContext?: boolean;
+	movedCwd?: boolean;
+	errexit?: boolean;
 }
 
 export interface PythonExecutionMessage {

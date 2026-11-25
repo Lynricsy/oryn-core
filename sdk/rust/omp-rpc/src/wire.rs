@@ -1215,6 +1215,8 @@ pub struct BashExecutionMessage {
 	pub images: Option<Vec<ImageContent>>,
 	pub meta: Option<Map<String, Value>>,
 	pub exclude_from_context: Option<bool>,
+	pub moved_cwd: Option<bool>,
+	pub errexit: Option<bool>,
 	/// Every key not decoded into a declared field.
 	pub extra: Map<String, Value>,
 }
@@ -1249,6 +1251,12 @@ impl Serialize for BashExecutionMessage {
 		if let Some(value) = &self.exclude_from_context {
 			map.serialize_entry("excludeFromContext", value)?;
 		}
+		if let Some(value) = &self.moved_cwd {
+			map.serialize_entry("movedCwd", value)?;
+		}
+		if let Some(value) = &self.errexit {
+			map.serialize_entry("errexit", value)?;
+		}
 		for (key, value) in &self.extra {
 			match key.as_str() {
 				"command" if self.command.is_some() => continue,
@@ -1260,6 +1268,8 @@ impl Serialize for BashExecutionMessage {
 				"images" if self.images.is_some() => continue,
 				"meta" if self.meta.is_some() => continue,
 				"excludeFromContext" if self.exclude_from_context.is_some() => continue,
+				"movedCwd" if self.moved_cwd.is_some() => continue,
+				"errexit" if self.errexit.is_some() => continue,
 				_ => {}
 			}
 			map.serialize_entry(key, value)?;
@@ -1281,6 +1291,8 @@ impl<'de> Deserialize<'de> for BashExecutionMessage {
 			images: take(&mut extra, "images"),
 			meta: take(&mut extra, "meta"),
 			exclude_from_context: take(&mut extra, "excludeFromContext"),
+			moved_cwd: take(&mut extra, "movedCwd"),
+			errexit: take(&mut extra, "errexit"),
 			extra,
 		})
 	}

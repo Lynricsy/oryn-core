@@ -152,6 +152,8 @@ export const messageDefs = {
 		"meta?": JSON_OBJECT,
 		timestamp: "number",
 		"excludeFromContext?": "boolean",
+		"movedCwd?": "boolean",
+		"errexit?": "boolean",
 	},
 	PythonExecutionMessage: {
 		role: "'pythonExecution'",

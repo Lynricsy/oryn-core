@@ -322,6 +322,8 @@ export class BashRunner {
 			meta,
 			timestamp: Date.now(),
 			excludeFromContext: options?.excludeFromContext,
+			...(result.movedCwd ? { movedCwd: true } : {}),
+			...(result.errexit ? { errexit: true } : {}),
 		};
 	}
 

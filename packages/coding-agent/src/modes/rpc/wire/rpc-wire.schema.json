@@ -1588,6 +1588,12 @@
 				},
 				"excludeFromContext": {
 					"type": "boolean"
+				},
+				"movedCwd": {
+					"type": "boolean"
+				},
+				"errexit": {
+					"type": "boolean"
 				}
 			},
 			"required": [

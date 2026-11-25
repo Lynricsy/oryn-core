@@ -354,6 +354,8 @@ class BashExecutionMessage(TypedDict):
     images: NotRequired[list[ImageContent]]
     meta: NotRequired[JsonObject]
     excludeFromContext: NotRequired[bool]
+    movedCwd: NotRequired[bool]
+    errexit: NotRequired[bool]
 
 
 class PythonExecutionMessage(TypedDict):
