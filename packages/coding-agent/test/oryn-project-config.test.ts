@@ -30,7 +30,7 @@ import {
 } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-omfg";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { discoverAgents } from "@oh-my-pi/pi-coding-agent/task/discovery";
-import { initTheme } from "@oh-my-pi/pi-tui/theme";
+import { initTheme } from "@oh-my-pi/pi-coding-agent/ui/theme/service";
 import { getAgentDir, removeWithRetries, setAgentDir } from "@oh-my-pi/pi-utils";
 
 const ENV_KEYS = ["ORYN_CENTRAL_CONFIG", "ORYN_PROJECT_CONFIG_ROOT"] as const;

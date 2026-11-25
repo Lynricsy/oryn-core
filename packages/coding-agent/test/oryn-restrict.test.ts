@@ -33,7 +33,7 @@ function createSession(testDir: string, remoteOnly: boolean): ToolSession {
 			const id = String(nextArtifactId++);
 			return { id, path: path.join(artifactsDir, `${id}.log`) };
 		},
-		settings: Settings.isolated({ "read.remoteOnly": remoteOnly, "fetch.enabled": true, "tools.xdev": false }),
+		settings: Settings.isolated({ "read.remoteOnly": remoteOnly, "fetch.enabled": true, "tools.commands": false }),
 	};
 }
 

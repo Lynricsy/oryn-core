@@ -348,7 +348,10 @@ describe("oryn model source", () => {
 				},
 				{
 					label: "a retry-fallback root model_change",
-					arrange: m => m.appendModelChange("openai/gpt-6.1-sol", undefined, true),
+					arrange: m =>
+						m.appendModelChange("openai/gpt-6.1-sol", undefined, {
+							fallback: { from: "anthropic/claude-sonnet-4-5", trigger: "request-error" },
+						}),
 				},
 				{
 					label: "a model_change naming another model",

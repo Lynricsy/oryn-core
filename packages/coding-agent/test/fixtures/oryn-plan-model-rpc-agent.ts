@@ -61,8 +61,8 @@ const mock = createMockModel({
 					{
 						type: "toolCall",
 						id: "call_propose",
-						name: "write",
-						arguments: { path: "xd://propose", content: "test-plan" },
+						name: "bash",
+						arguments: { command: "propose test-plan" },
 					},
 				],
 			};

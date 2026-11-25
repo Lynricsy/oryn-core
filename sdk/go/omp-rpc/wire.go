@@ -2551,7 +2551,13 @@ type SessionState struct {
 	AutoCompactionEnabled  bool                      `json:"autoCompactionEnabled"`
 	FastModeEnabled        bool                      `json:"fastModeEnabled"`
 	FastModeActive         bool                      `json:"fastModeActive"`
-	FastModeUltrafast      bool                      `json:"fastModeUltrafast"`
+	// `/fast` (the `priority` tier) applies to the active model.
+	FastModeSupported bool `json:"fastModeSupported"`
+	// `/fast ultra` (the OpenAI `ultrafast` tier) applies to the active model.
+	UltrafastSupported bool `json:"ultrafastSupported"`
+	// `/fast ultra` is on for the active model.
+	UltrafastEnabled  bool `json:"ultrafastEnabled"`
+	FastModeUltrafast bool `json:"fastModeUltrafast"`
 	// `/slow` applies to the active model.
 	SlowModeSupported bool `json:"slowModeSupported"`
 	// `/slow` is on for the active model; always `false` when `slowModeSupported` is `false`.
@@ -2600,6 +2606,9 @@ func (v *SessionState) decodeFrom(raw map[string]json.RawMessage) error {
 	d.defaulted("autoCompactionEnabled", &out.AutoCompactionEnabled, `false`)
 	d.defaulted("fastModeEnabled", &out.FastModeEnabled, `false`)
 	d.defaulted("fastModeActive", &out.FastModeActive, `false`)
+	d.defaulted("fastModeSupported", &out.FastModeSupported, `false`)
+	d.defaulted("ultrafastSupported", &out.UltrafastSupported, `false`)
+	d.defaulted("ultrafastEnabled", &out.UltrafastEnabled, `false`)
 	d.defaulted("fastModeUltrafast", &out.FastModeUltrafast, `false`)
 	d.defaulted("slowModeSupported", &out.SlowModeSupported, `false`)
 	d.defaulted("slowModeEnabled", &out.SlowModeEnabled, `false`)
@@ -8312,6 +8321,82 @@ func (v *CancelSubagentResult) decodeFrom(raw map[string]json.RawMessage) error 
 	return nil
 }
 
+type OrynCancelJobResult struct {
+	Cancelled bool `json:"cancelled"`
+}
+
+func (v *OrynCancelJobResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "OrynCancelJobResult", v.decodeFrom)
+}
+
+func (v *OrynCancelJobResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out OrynCancelJobResult
+	d := fieldDecoder{raw: raw, owner: "OrynCancelJobResult"}
+	d.required("cancelled", &out.Cancelled)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type OrynToolDefsResult struct {
+	Tools []ToolDescriptor `json:"tools"`
+}
+
+func (v *OrynToolDefsResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "OrynToolDefsResult", v.decodeFrom)
+}
+
+func (v *OrynToolDefsResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out OrynToolDefsResult
+	d := fieldDecoder{raw: raw, owner: "OrynToolDefsResult"}
+	d.required("tools", &out.Tools)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type OrynToolCallResult struct {
+	Result HostToolResultPayload `json:"result"`
+}
+
+func (v *OrynToolCallResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "OrynToolCallResult", v.decodeFrom)
+}
+
+func (v *OrynToolCallResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out OrynToolCallResult
+	d := fieldDecoder{raw: raw, owner: "OrynToolCallResult"}
+	d.required("result", &out.Result)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type OrynToolCancelResult struct {
+	Cancelled bool `json:"cancelled"`
+}
+
+func (v *OrynToolCancelResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "OrynToolCancelResult", v.decodeFrom)
+}
+
+func (v *OrynToolCancelResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out OrynToolCancelResult
+	d := fieldDecoder{raw: raw, owner: "OrynToolCancelResult"}
+	d.required("cancelled", &out.Cancelled)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
 type LiveStartResult struct {
 	Voice string `json:"voice"`
 }
@@ -8388,6 +8473,102 @@ func (v *DictationStopResult) decodeFrom(raw map[string]json.RawMessage) error {
 	}
 	*v = out
 	return nil
+}
+
+type OrynSelectModelResult struct {
+	Model         ModelInfo                   `json:"model"`
+	Source        OrynSelectModelResultSource `json:"source"`
+	ThinkingLevel *ThinkingLevel              `json:"thinkingLevel,omitempty"`
+	Role          *string                     `json:"role,omitempty"`
+	Alias         *string                     `json:"alias,omitempty"`
+	Baseline      *bool                       `json:"baseline,omitempty"`
+}
+
+func (v *OrynSelectModelResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "OrynSelectModelResult", v.decodeFrom)
+}
+
+func (v *OrynSelectModelResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out OrynSelectModelResult
+	d := fieldDecoder{raw: raw, owner: "OrynSelectModelResult"}
+	d.required("model", &out.Model)
+	d.required("source", &out.Source)
+	d.optional("thinkingLevel", &out.ThinkingLevel)
+	d.optional("role", &out.Role)
+	d.optional("alias", &out.Alias)
+	d.optional("baseline", &out.Baseline)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type OrynSelectModelResultSource string
+
+const (
+	OrynSelectModelResultSourceRole   OrynSelectModelResultSource = "role"
+	OrynSelectModelResultSourceManual OrynSelectModelResultSource = "manual"
+)
+
+func (v *OrynSelectModelResultSource) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "OrynSelectModelResultSource")
+	if err != nil {
+		return err
+	}
+	switch value := OrynSelectModelResultSource(s); value {
+	case OrynSelectModelResultSourceRole, OrynSelectModelResultSourceManual:
+		*v = value
+		return nil
+	}
+	return unknownValue("OrynSelectModelResultSource", s)
+}
+
+type OrynMarkSessionStartResult struct {
+	Recorded bool                              `json:"recorded"`
+	Source   *OrynMarkSessionStartResultSource `json:"source,omitempty"`
+	Role     *string                           `json:"role,omitempty"`
+	Alias    *string                           `json:"alias,omitempty"`
+	Model    *string                           `json:"model,omitempty"`
+}
+
+func (v *OrynMarkSessionStartResult) UnmarshalJSON(data []byte) error {
+	return decodeWith(data, "OrynMarkSessionStartResult", v.decodeFrom)
+}
+
+func (v *OrynMarkSessionStartResult) decodeFrom(raw map[string]json.RawMessage) error {
+	var out OrynMarkSessionStartResult
+	d := fieldDecoder{raw: raw, owner: "OrynMarkSessionStartResult"}
+	d.required("recorded", &out.Recorded)
+	d.optional("source", &out.Source)
+	d.optional("role", &out.Role)
+	d.optional("alias", &out.Alias)
+	d.optional("model", &out.Model)
+	if d.err != nil {
+		return d.err
+	}
+	*v = out
+	return nil
+}
+
+type OrynMarkSessionStartResultSource string
+
+const (
+	OrynMarkSessionStartResultSourceStartup OrynMarkSessionStartResultSource = "startup"
+	OrynMarkSessionStartResultSourceManual  OrynMarkSessionStartResultSource = "manual"
+)
+
+func (v *OrynMarkSessionStartResultSource) UnmarshalJSON(data []byte) error {
+	s, err := decodeString(data, "OrynMarkSessionStartResultSource")
+	if err != nil {
+		return err
+	}
+	switch value := OrynMarkSessionStartResultSource(s); value {
+	case OrynMarkSessionStartResultSourceStartup, OrynMarkSessionStartResultSourceManual:
+		*v = value
+		return nil
+	}
+	return unknownValue("OrynMarkSessionStartResultSource", s)
 }
 
 type GetAvailableModelsResult struct {
@@ -8881,12 +9062,13 @@ func (c Commands) NewSession(ctx context.Context, p NewSessionCommand) (Cancella
 
 // OpenSessionCommand holds the parameters of "open_session".
 type OpenSessionCommand struct {
-	SessionDir string  `json:"sessionDir"`
-	Provider   *string `json:"provider,omitempty"`
-	ModelID    *string `json:"modelId,omitempty"`
+	SessionDir    string         `json:"sessionDir"`
+	Provider      *string        `json:"provider,omitempty"`
+	ModelID       *string        `json:"modelId,omitempty"`
+	ThinkingLevel *ThinkingLevel `json:"thinkingLevel,omitempty"`
 }
 
-// OpenSession sends "open_session": Continue the newest non-empty session in a directory, or start a fresh one there. Give provider and modelId together to override the saved model; otherwise an unavailable saved model fails the request.
+// OpenSession sends "open_session": Continue the newest non-empty session in a directory, or start a fresh one there. Give provider and modelId together to override the saved model; otherwise an unavailable saved model fails the request. Oryn: thinkingLevel sets the session thinking level; when the opened session is in plan mode on the plan model, the given model and thinkingLevel become the pre-plan baseline restored on exit instead.
 func (c Commands) OpenSession(ctx context.Context, p OpenSessionCommand) (OpenSessionResult, error) {
 	var out OpenSessionResult
 	err := c.call(ctx, "open_session", p, 0, &out)
@@ -8910,6 +9092,18 @@ type SetFastModeCommand struct {
 func (c Commands) SetFastMode(ctx context.Context, p SetFastModeCommand) (FastModeResult, error) {
 	var out FastModeResult
 	err := c.call(ctx, "set_fast_mode", p, 0, &out)
+	return out, err
+}
+
+// SetUltrafastModeCommand holds the parameters of "set_ultrafast_mode".
+type SetUltrafastModeCommand struct {
+	Enabled bool `json:"enabled"`
+}
+
+// SetUltrafastMode sends "set_ultrafast_mode": Turn `/fast ultra` (the OpenAI `ultrafast` service tier) on or off for the active model.
+func (c Commands) SetUltrafastMode(ctx context.Context, p SetUltrafastModeCommand) (FastModeResult, error) {
+	var out FastModeResult
+	err := c.call(ctx, "set_ultrafast_mode", p, 0, &out)
 	return out, err
 }
 
@@ -9072,6 +9266,56 @@ func (c Commands) CancelSubagent(ctx context.Context, p CancelSubagentCommand) (
 	return out.Cancelled, err
 }
 
+// OrynCancelJobCommand holds the parameters of "oryn_cancel_job".
+type OrynCancelJobCommand struct {
+	JobID string `json:"jobId"`
+}
+
+// OrynCancelJob sends "oryn_cancel_job": Oryn: cancel one running background job this session owns (`/jobs kill <id>`); false when there is none by that id.
+func (c Commands) OrynCancelJob(ctx context.Context, p OrynCancelJobCommand) (bool, error) {
+	var out OrynCancelJobResult
+	err := c.call(ctx, "oryn_cancel_job", p, 0, &out)
+	return out.Cancelled, err
+}
+
+// OrynToolDefsCommand holds the parameters of "oryn_tool_defs".
+type OrynToolDefsCommand struct {
+	Names []string `json:"names,omitempty"`
+}
+
+// OrynToolDefs sends "oryn_tool_defs": Oryn: definitions of the named session tools (default: the enabled ones); unknown and denied names are skipped.
+func (c Commands) OrynToolDefs(ctx context.Context, p OrynToolDefsCommand) ([]ToolDescriptor, error) {
+	var out OrynToolDefsResult
+	err := c.call(ctx, "oryn_tool_defs", p, 0, &out)
+	return out.Tools, err
+}
+
+// OrynToolCallCommand holds the parameters of "oryn_tool_call".
+type OrynToolCallCommand struct {
+	CallID    string                     `json:"callId"`
+	ToolName  string                     `json:"toolName"`
+	Arguments map[string]json.RawMessage `json:"arguments,omitempty"`
+}
+
+// OrynToolCall sends "oryn_tool_call": Oryn: run one session tool directly, without the model; partial output streams as `oryn_tool_update` frames. A tool that throws yields `isError: true`.
+func (c Commands) OrynToolCall(ctx context.Context, p OrynToolCallCommand) (HostToolResultPayload, error) {
+	var out OrynToolCallResult
+	err := c.call(ctx, "oryn_tool_call", p, 1800*time.Second, &out)
+	return out.Result, err
+}
+
+// OrynToolCancelCommand holds the parameters of "oryn_tool_cancel".
+type OrynToolCancelCommand struct {
+	CallID string `json:"callId"`
+}
+
+// OrynToolCancel sends "oryn_tool_cancel": Oryn: abort a running `oryn_tool_call`; false when no call with that id is running.
+func (c Commands) OrynToolCancel(ctx context.Context, p OrynToolCancelCommand) (bool, error) {
+	var out OrynToolCancelResult
+	err := c.call(ctx, "oryn_tool_cancel", p, 0, &out)
+	return out.Cancelled, err
+}
+
 // SteerSubagentCommand holds the parameters of "steer_subagent".
 type SteerSubagentCommand struct {
 	SubagentID string `json:"subagentId"`
@@ -9165,6 +9409,34 @@ func (c Commands) SetModel(ctx context.Context, p SetModelCommand) (ModelInfo, e
 func (c Commands) CycleModel(ctx context.Context) (*ModelCycleResult, error) {
 	var out *ModelCycleResult
 	err := c.call(ctx, "cycle_model", nil, 0, &out)
+	return out, err
+}
+
+// OrynSelectModelCommand holds the parameters of "oryn_select_model".
+type OrynSelectModelCommand struct {
+	Role          *string        `json:"role,omitempty"`
+	Provider      *string        `json:"provider,omitempty"`
+	ModelID       *string        `json:"modelId,omitempty"`
+	Startup       *bool          `json:"startup,omitempty"`
+	ThinkingLevel *ThinkingLevel `json:"thinkingLevel,omitempty"`
+}
+
+// OrynSelectModel sends "oryn_select_model": Oryn: select the session model by role or by provider/id and record the selection source in the transcript. thinkingLevel is applied after the selection. startup marks the role a new Oryn thread starts with: when the session is already in plan mode, the role becomes the pre-plan baseline (baseline: true) instead of replacing the plan model.
+func (c Commands) OrynSelectModel(ctx context.Context, p OrynSelectModelCommand) (OrynSelectModelResult, error) {
+	var out OrynSelectModelResult
+	err := c.call(ctx, "oryn_select_model", p, 0, &out)
+	return out, err
+}
+
+// OrynMarkSessionStartCommand holds the parameters of "oryn_mark_session_start".
+type OrynMarkSessionStartCommand struct {
+	ExplicitModel *bool `json:"explicitModel,omitempty"`
+}
+
+// OrynMarkSessionStart sends "oryn_mark_session_start": Oryn: record how a fresh session's model was chosen; a no-op once the session has messages or a recorded source.
+func (c Commands) OrynMarkSessionStart(ctx context.Context, p OrynMarkSessionStartCommand) (OrynMarkSessionStartResult, error) {
+	var out OrynMarkSessionStartResult
+	err := c.call(ctx, "oryn_mark_session_start", p, 0, &out)
 	return out, err
 }
 

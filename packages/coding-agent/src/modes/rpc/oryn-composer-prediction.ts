@@ -53,10 +53,15 @@ export class OrynComposerPredictor {
 			settings: session.settings,
 			viewSession: session,
 			focusedAgentId: undefined,
-			editor: { getText: () => "" },
-			ui: { requestRender: () => this.sync() },
+			composer: { text: () => "" },
 		} as unknown as PredictionContext;
-		this.#controller = new ComposerPredictionController(context, options);
+		this.#controller = new ComposerPredictionController(context, {
+			...options,
+			onChange: () => {
+				options.onChange?.();
+				this.sync();
+			},
+		});
 		// 设置与会话同寿命，监听不需要退订。
 		cfgComposerPredictions.listen(session, enabled => {
 			if (!enabled) this.#controller.cancel();

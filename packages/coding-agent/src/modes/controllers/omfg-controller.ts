@@ -55,7 +55,10 @@ export class OmfgController {
 	#activeRequest: OmfgRequest | undefined;
 	readonly #inspector: TtsrToolInspector;
 
-	constructor(private readonly ctx: InteractiveModeContext) {
+	constructor(
+		private readonly ctx: InteractiveModeContext,
+		private readonly options?: { onPanel?: (panel: OmfgPanelState) => void },
+	) {
 		this.#inspector = new TtsrToolInspector(
 			() => ctx.session.agent.state.tools,
 			() => ctx.sessionManager.getCwd(),
@@ -96,6 +99,7 @@ export class OmfgController {
 			abortController: new AbortController(),
 			complaint: trimmedComplaint,
 		};
+		this.options?.onPanel?.(request.panel);
 		this.ctx.shell.dock.slot("omfg").set(() =>
 			OmfgPanel({
 				complaint: trimmedComplaint,

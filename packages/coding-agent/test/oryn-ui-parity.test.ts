@@ -21,7 +21,7 @@ import type {
 	RpcLoopModeState,
 } from "@oh-my-pi/pi-coding-agent/modes/rpc/rpc-types";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
-import { initTheme } from "@oh-my-pi/pi-tui/theme";
+import { initTheme } from "@oh-my-pi/pi-coding-agent/ui/theme/service";
 import { removeWithRetries, withTimeout } from "@oh-my-pi/pi-utils";
 
 interface Frame {
@@ -305,7 +305,7 @@ describe("get_active_tools", () => {
 		const session = {
 			agent: { state: { tools: [{ name: "read", description: "Read files" }] } },
 			hasBuiltInTool: (name: string) => name === "read",
-			getXdevToolEntries: () => [{ name: "read", summary: "Read device" }],
+			getToolCommandEntries: () => [{ name: "read", summary: "Read device" }],
 		} as unknown as AgentSession;
 		const result: RpcActiveToolsResult = buildRpcActiveTools(session);
 		expect(result.tools).toStrictEqual([

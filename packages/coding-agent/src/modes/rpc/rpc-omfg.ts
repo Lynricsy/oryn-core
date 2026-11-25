@@ -1,8 +1,8 @@
-import type { OmfgPanelComponent, OmfgPanelResult } from "@oh-my-pi/pi-tui/overlays/omfg-panel";
 import type { ExtensionUIContext } from "../../extensibility/extensions";
 import { orynCentralConfigEnabled, orynProjectConfigRoot } from "../../discovery/oryn-project-config";
 import type { AgentSession } from "../../session/agent-session";
-import { OmfgController } from "../controllers/omfg-controller";
+import type { OmfgPanelState } from "../../ui/overlays/panels/omfg-panel";
+import { OmfgController, type OmfgPanelResult } from "../controllers/omfg-controller";
 import type { InteractiveModeContext } from "../types";
 
 export interface RpcOmfgResult {
@@ -33,7 +33,7 @@ function createRpcOmfgPanelMirror(ui: ExtensionUIContext) {
 			rule ? [`TTSR rule — ${VALIDATION_LABEL[validation]}`, "", ...rule.split("\n")] : undefined,
 		);
 	return {
-		attach(component: OmfgPanelComponent): void {
+		attach(component: OmfgPanelState): void {
 			const setRule = component.setRule.bind(component);
 			component.setRule = text => {
 				setRule(text);
@@ -105,7 +105,6 @@ export async function runRpcOmfg(
 		settings: session.settings,
 		ui: { requestRender: () => {} },
 		shell: { dock: { slot: () => ({ set: () => {}, clear: () => {} }) } },
-		omfgContainer: { clear: () => {}, addChild: (component: OmfgPanelComponent) => mirror.attach(component) },
 		showStatus: (message: string) => {
 			diagnostic = message;
 		},
@@ -118,7 +117,7 @@ export async function runRpcOmfg(
 	} as unknown as InteractiveModeContext;
 	let result: OmfgPanelResult | undefined;
 	try {
-		result = await new OmfgController(context).startAndWait(complaint);
+		result = await new OmfgController(context, { onPanel: panel => mirror.attach(panel) }).startAndWait(complaint);
 	} finally {
 		mirror.clear();
 	}
