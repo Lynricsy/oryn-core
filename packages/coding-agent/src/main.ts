@@ -1927,7 +1927,7 @@ export async function buildSessionOptions(
 		// memory, auto-learn or Auto-QA, and subagents inherit the restriction.
 		options.toolNames = parsed.tools && parsed.tools.length > 0 ? parsed.tools : [];
 		options.restrictToolNames = true;
-		if (parsed.allowMcp) {
+		if (parsed.allowMcp || process.env.ORYN_ALLOW_RESTRICTED_MCP === "1") {
 			options.allowRestrictedMcp = true;
 		}
 		// The restricted session would not bind them; do not run their factories either.
