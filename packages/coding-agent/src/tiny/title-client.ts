@@ -31,6 +31,7 @@ import { ensureTinyMlxRuntime, getTinyMlxModelDir, MLX_LM_VERSION } from "./mlx-
 import MLX_SERVER_SCRIPT from "./mlx-server.py" with { type: "text" };
 import { getTinyLocalModelSpec, isTinyLocalModelKey, type TinyLocalModelKey } from "./models";
 import { normalizeGeneratedTitle } from "./text";
+import { withOrynTitleLanguage } from "../utils/oryn-language";
 import {
 	TINY_WORKER_ARG,
 	TINY_WORKER_IDLE_MS_ENV,
@@ -237,7 +238,7 @@ async function mlxOpenSpec(
 
 function buildTitleMessages(message: string, systemPrompt?: string): TinyChatMessage[] {
 	return [
-		{ role: "system", content: systemPrompt?.trim() || TINY_TITLE_SYSTEM_PROMPT },
+		{ role: "system", content: systemPrompt?.trim() || withOrynTitleLanguage(TINY_TITLE_SYSTEM_PROMPT) },
 		{ role: "user", content: formatTitleUserMessage(message) },
 	];
 }

@@ -45,6 +45,7 @@ import { normalizePromptPath } from "./utils/prompt-path";
 import { quotePosixArgument } from "./utils/shell-quote";
 import { expandTilde } from "./tools/path-utils";
 import { matchModelPattern, type ModelPatternEntry } from "./utils/model-patterns";
+import { orynCustomPromptIntentGuidance, orynIntentGuidance } from "./utils/oryn-language";
 import { AGENTS_MD_LIMIT, buildWorkspaceTree, type WorkspaceTree } from "./workspace-tree";
 import { combine } from "./config/registry";
 import { cfgBashAutoBackgroundEnabled } from "./exec/settings";
@@ -1140,7 +1141,8 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		personality: personalityBlock,
 		intentTracing: !!intentField,
 		intentField: intentField ?? "",
-		intentGuidance: $env.PI_INTENT_PROMPT || intentGuidance || "",
+		intentGuidance: orynIntentGuidance($env.PI_INTENT_PROMPT || intentGuidance || ""),
+		orynCustomIntentGuidance: orynCustomPromptIntentGuidance(intentField),
 		eagerTasks,
 		eagerTasksAlways,
 		taskBatch,

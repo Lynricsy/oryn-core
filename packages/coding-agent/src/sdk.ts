@@ -287,6 +287,7 @@ import { SnapcompactInlineTransformer } from "./session/snapcompact-inline";
 import { createSnapcompactSavingsRecorder } from "./session/snapcompact-savings-journal";
 import { createSpeculativeToolExecutionConfig } from "./speculation/host";
 import { closeAllConnections } from "./ssh/connection-manager";
+import { orynIntentDescription } from "./utils/oryn-language";
 import {
 	type BuildSystemPromptResult,
 	buildSystemPrompt as buildSystemPromptInternal,
@@ -5281,7 +5282,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			resolveFallbackTool: resolveToolCommandTool,
 			suggestFallbackToolNames: suggestToolCommandNames,
 			intentTracing: intentTracingActive(settings),
-			intentDescription: spotlightExperiment ? SPOTLIGHT_INTENT_DESCRIPTION : undefined,
+			intentDescription: orynIntentDescription(spotlightExperiment ? SPOTLIGHT_INTENT_DESCRIPTION : undefined),
 			pruneToolDescriptions: resolveInlineToolDescriptors(),
 			// Per request against the model actually requested, so `tools.format`
 			// changes and model switches reach the next provider call.

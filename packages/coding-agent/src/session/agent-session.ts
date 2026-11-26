@@ -329,6 +329,7 @@ import {
 } from "../utils/title-card";
 import { generateSessionTitle, nerdGlyphsActive } from "../utils/title-generator";
 import { orynHostRendersNerdGlyphs } from "../utils/oryn-nerd-glyphs";
+import { withOrynTitleForkLanguage, withOrynTitleLanguage } from "../utils/oryn-language";
 import { TokenRateMeter } from "../utils/token-rate";
 import { buildNamedToolChoice, isToolChoiceActive } from "../utils/tool-choice";
 import type { VibeModeState } from "../vibe/state";
@@ -12870,10 +12871,12 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 		// turn moves the leaf while this request streams.
 		const usageOwner = { sessionId, parentId: this.sessionManager.getLeafId() };
 		this.runEphemeralTurn({
-			promptText: prompt.render(titleForkPrompt, {
-				card: icons !== "boring",
-				nerdFonts: icons === "nf+emoji",
-			}),
+			promptText: withOrynTitleForkLanguage(
+				prompt.render(titleForkPrompt, {
+					card: icons !== "boring",
+					nerdFonts: icons === "nf+emoji",
+				}),
+			),
 			// Journaled where the billed message exists, so a fork that ends in a
 			// provider error still records its spend before rejecting.
 			onUsage: message => this.#reportTitleUsage(usageOwner, "title-fork", message),
@@ -13082,7 +13085,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
 				sessionId,
 				this.model,
 				provider => buildSessionMetadata(sessionId, provider, this.#modelRegistry.authStorage),
-				customSystemPrompt ?? this.#titleSystemPrompt,
+				customSystemPrompt ?? (this.#titleSystemPrompt ? withOrynTitleLanguage(this.#titleSystemPrompt) : undefined),
 				titleSignal,
 				parentSessionId,
 				(message, prompt) => {

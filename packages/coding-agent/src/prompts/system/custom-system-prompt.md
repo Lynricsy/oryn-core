@@ -46,3 +46,6 @@ Some values in tool output are redacted for security. They appear as placeholder
 {{#if resultShaping}}
 {{resultShaping}}
 {{/if}}
+{{#if orynCustomIntentGuidance}}
+{{orynCustomIntentGuidance}}
+{{/if}}

@@ -32,6 +32,7 @@ import { createRoot, effect, nativeRendering, untrack } from "@oh-my-pi/pi-tui";
 import { writeTerminalSequence } from "@oh-my-pi/pi-tui/driver/session";
 import { currentTheme } from "@oh-my-pi/pi-tui/theme/runtime";
 import { formatTitleUserMessage } from "../tiny/message-preproc";
+import { withOrynTitleLanguage } from "./oryn-language";
 
 const TITLE_SYSTEM_PROMPT = prompt.render(titleSystemPrompt);
 const TITLE_MARKER_INSTRUCTION = prompt.render(titleMarkerInstruction);
@@ -391,7 +392,7 @@ async function generateTitleOnlineWithModels(
 	// scheme, but hosts that ignore or reject forced `tool_choice` then echoed
 	// the prompt's `{"title": ...}` JSON example verbatim as the session title;
 	// markers work uniformly everywhere.
-	const systemPrompt = titleSystemPrompt ? [titleSystemPrompt, TITLE_MARKER_INSTRUCTION] : [TITLE_SYSTEM_PROMPT];
+	const systemPrompt = titleSystemPrompt ? [titleSystemPrompt, TITLE_MARKER_INSTRUCTION] : [withOrynTitleLanguage(TITLE_SYSTEM_PROMPT)];
 	const userMessage = formatTitleUserMessage(firstMessage);
 
 	for (const model of models) {

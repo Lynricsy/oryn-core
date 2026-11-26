@@ -8,6 +8,7 @@ import { resolveModelOverride } from "../config/model-resolver";
 import type { Settings } from "../config/settings";
 import taskLabelSystemPrompt from "../prompts/system/task-label.md" with { type: "text" };
 import { generateSessionTitle, type TitleUsageReporter } from "../utils/title-generator";
+import { withOrynTaskLabelLanguage } from "../utils/oryn-language";
 
 const TASK_LABEL_SYSTEM_PROMPT = prompt.render(taskLabelSystemPrompt);
 
@@ -51,7 +52,7 @@ export async function generateTaskLabel(
 			sessionId,
 			currentModel,
 			undefined,
-			TASK_LABEL_SYSTEM_PROMPT,
+			withOrynTaskLabelLanguage(TASK_LABEL_SYSTEM_PROMPT),
 			signal,
 			undefined,
 			onUsage,
