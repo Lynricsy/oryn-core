@@ -56,6 +56,7 @@ import { isDsmlLeakRecoveryTarget, removeDsmlToolMarkupLeak } from "@oh-my-pi/pi
 import { cloneJsonTree, logger, sanitizeText, structuredCloneJSON, toError } from "@oh-my-pi/pi-utils";
 import { INTENT_FIELD } from "@oh-my-pi/pi-wire";
 import { LiveSteeringChannel } from "./live-steering";
+import { isOrynEndTurnToolResult } from "./oryn-end-turn";
 import { agentPauseGate } from "./pause";
 import { type AgentRunCoverage, type AgentRunSummary, ToolCallBlockedError } from "./run-collector";
 import { SpeculativeOperationCoordinator } from "./speculative-execution";
@@ -1396,7 +1397,10 @@ async function runLoopBody(
 			turnOpen = false;
 			// A tool hook may mark its completed result as terminal (e.g. subagent
 			// yield) — same stop-before-next-model-call rule as the main loop.
-			if (signal?.reason === TERMINAL_TOOL_RESULT_ABORT_REASON) {
+			if (
+				signal?.reason === TERMINAL_TOOL_RESULT_ABORT_REASON ||
+				executionResult.toolResults.some(isOrynEndTurnToolResult)
+			) {
 				endAgentStream(stream, newMessages, telemetry, stepCounter.count);
 				return;
 			}
@@ -1832,7 +1836,7 @@ async function runLoopBody(
 
 				// A tool hook may mark its completed result as terminal (e.g. subagent yield).
 				// Stop before the next provider call without changing external/user abort semantics.
-				if (signal?.reason === TERMINAL_TOOL_RESULT_ABORT_REASON) {
+				if (signal?.reason === TERMINAL_TOOL_RESULT_ABORT_REASON || toolResults.some(isOrynEndTurnToolResult)) {
 					hasMoreToolCalls = false;
 				}
 
