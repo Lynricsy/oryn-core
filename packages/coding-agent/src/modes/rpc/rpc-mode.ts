@@ -245,6 +245,7 @@ import { persistRpcLeaf } from "./oryn-leaf";
 import { handleOrynMarkSessionStart, handleOrynSelectModel } from "./oryn-model-source";
 import { type OrynModelSourceData } from "./oryn-model-source";
 import { OrynPlanModelController } from "./oryn-plan-model";
+import { createOrynPlanExecutionTiers } from "./oryn-plan-tiers";
 import { OrynShellPseudoProjector } from "./oryn-shell-pseudo";
 import { OrynToolExecutor } from "./oryn-tool-exec";
 import { handleOrynCancelJob, isOrynLoopPromptCandidate, orynPlanModeConflict } from "./oryn-ui-parity";
@@ -2187,6 +2188,9 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 		onDeferredModelRestore: () => planModelController.applyDeferredRestore(),
 		onPostNewSession: restored =>
 			planModelController.recordRestoredSourceAfterNewSession(restored as OrynModelSourceData | undefined),
+		executionTiers: createOrynPlanExecutionTiers(session, message =>
+			output({ type: "notice", level: "warning", message, source: "plan-mode" }),
+		),
 	});
 	const vibeModeController = new RpcVibeModeController(session);
 	const goalModeController = new RpcGoalModeController({

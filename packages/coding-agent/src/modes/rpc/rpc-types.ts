@@ -74,6 +74,7 @@ import type { RpcBrowserHostInfo } from "./rpc-browser-host";
 import type { RpcGoalOp, RpcGoalResult } from "./rpc-goal";
 import type { RpcMessagesPage } from "./rpc-messages";
 import type { OrynRpcCommand, OrynRpcResponse } from "./oryn-model-source";
+import type { RpcPlanExecutionTier } from "./oryn-plan-tiers";
 import type { OrynUiParityRpcCommand, OrynUiParityRpcResponse } from "./oryn-ui-parity";
 import type { OrynToolExecRpcCommand, OrynToolExecRpcResponse } from "./oryn-tool-exec";
 export type { OrynComposerPredictionFrame } from "./oryn-composer-prediction";
@@ -377,7 +378,10 @@ export type RpcCommand =
 			approved: boolean;
 			option?: RpcPlanApprovalOption;
 			feedback?: string;
+			/** Oryn: relative paths resolve against the session cwd (as in the TUI). */
 			savePath?: string;
+			/** Oryn: execution tier (`plan_proposal.tiers[].role`); ignored by `save`. */
+			role?: string;
 	  }
 
 	// Session modes (vibe / goal / loop)
@@ -1511,6 +1515,10 @@ export interface RpcPlanProposalFrame {
 	suggestedFileName: string;
 	planContent: string;
 	options: string[];
+	/** Oryn: execution tiers (the TUI's "continue with" slider); omitted when fewer than two. */
+	tiers?: RpcPlanExecutionTier[];
+	/** Oryn: the tier a host should preselect (`default` when present). */
+	defaultTier?: string;
 }
 
 // ============================================================================

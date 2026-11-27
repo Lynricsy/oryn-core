@@ -600,6 +600,84 @@ describe("RPC plan mode model switching", () => {
 		expect(afterSave.thinkingLevel).toBe(ThinkingLevel.Medium);
 	});
 
+	/** 进入计划模式并让模型提交计划，返回 `plan_proposal` 帧。 */
+	async function propose(rpc: FixtureRpc): Promise<Frame> {
+		await rpc.data({ type: "set_plan_mode", enabled: true });
+		const proposal = rpc.waitFor(f => f.type === "plan_proposal");
+		await rpc.data({ type: "prompt", message: "make a plan" });
+		return proposal;
+	}
+
+	function lastSource(entries: Array<Record<string, unknown>>): unknown {
+		return entries.filter(e => e.type === "custom" && e.customType === ORYN_MODEL_SOURCE_ENTRY).at(-1)?.data;
+	}
+
+	test("plan_proposal lists execution tiers; approving with a role runs on that tier after the restore", async () => {
+		const env = {
+			ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high",
+			ORYN_SLOW_ROLE: "anthropic/claude-opus-4-6",
+			ORYN_PROPOSE_ON_TURN: "1",
+		};
+		const rpc = await start(env);
+		const proposal = await propose(rpc);
+		expect(proposal.defaultTier).toBe("default");
+		expect(proposal.tiers).toEqual([
+			expect.objectContaining({ role: "default", provider: "anthropic", model: "claude-sonnet-4-5" }),
+			expect.objectContaining({ role: "slow", provider: "anthropic", model: "claude-opus-4-6" }),
+		]);
+
+		await rpc.data({ type: "plan_approval", approved: true, option: "keep_context", role: "slow" });
+		const after = await rpc.state();
+		expect(after.planModeEnabled).toBe(false);
+		expect(after.model?.id).toBe("claude-opus-4-6");
+		expect(lastSource(await rpc.readSessionEntries(after.sessionFile!))).toEqual({
+			v: 1,
+			source: "role",
+			model: "anthropic/claude-opus-4-6",
+			role: "slow",
+		});
+
+		// execute 跨 newSession：档位落在新会话上
+		const rpcExec = await start(env);
+		await propose(rpcExec);
+		await rpcExec.data({ type: "plan_approval", approved: true, option: "execute", role: "slow" });
+		const afterExec = await rpcExec.state();
+		expect(afterExec.model?.id).toBe("claude-opus-4-6");
+		expect(lastSource(await rpcExec.readSessionEntries(afterExec.sessionFile!))).toMatchObject({ role: "slow" });
+	});
+
+	test("an unknown execution role fails before any state change and leaves the proposal answerable", async () => {
+		const rpc = await start({
+			ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high",
+			ORYN_SLOW_ROLE: "anthropic/claude-opus-4-6",
+			ORYN_PROPOSE_ON_TURN: "1",
+		});
+		await propose(rpc);
+		const failed = await rpc.send({ type: "plan_approval", approved: true, option: "execute", role: "nope" });
+		expect(failed.success).toBe(false);
+		expect(failed.error).toBe("Unknown plan execution role: nope");
+		const still = await rpc.state();
+		expect(still.planModeEnabled).toBe(true);
+		expect(still.model?.id).toBe("claude-opus-4-6");
+
+		await rpc.data({ type: "plan_approval", approved: true, option: "keep_context" });
+		expect((await rpc.state()).model?.id).toBe("claude-sonnet-4-5");
+	});
+
+	test("save resolves a relative savePath against the session cwd", async () => {
+		const rpc = await start({ ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high", ORYN_PROPOSE_ON_TURN: "1" });
+		await propose(rpc);
+		const result = await rpc.data<{ savedPath?: string }>({
+			type: "plan_approval",
+			approved: true,
+			option: "save",
+			savePath: "plans/TEST_PLAN.md",
+		});
+		const expected = path.join(rpc.dir, "plans", "TEST_PLAN.md");
+		expect(result.savedPath).toBe(expected);
+		expect(await fs.readFile(expected, "utf8")).toContain("# Test Plan");
+	});
+
 	test("manual model switch during streaming cancels deferred plan model switch", async () => {
 		const rpc = await start({
 			ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high",

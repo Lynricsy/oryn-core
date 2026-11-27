@@ -30,6 +30,8 @@ import planModeApprovedPrompt from "../../prompts/system/plan-mode-approved.md" 
 import planModeCompactInstructionsPrompt from "../../prompts/system/plan-mode-compact-instructions.md" with { type: "text" };
 import type { AgentSession, AgentSessionEvent } from "../../session/agent-session";
 import { type PlanProposalHandler, proposeDispatchDetails } from "../../tools/resolve";
+import { resolveToCwd } from "../../tools/path-utils";
+import type { OrynPlanExecutionTiers } from "./oryn-plan-tiers";
 import type { RpcPlanApprovalOption, RpcPlanApprovalResult, RpcPlanProposalFrame } from "./rpc-types";
 
 /** Options advertised on the `plan_proposal` frame (TUI review parity). */
@@ -51,6 +53,8 @@ interface RpcPlanApprovalControllerDeps {
 	onDeferredModelRestore?: () => Promise<void>;
 	/** Oryn：`execute` / `save` 在 `newSession()` 后补写恢复后的模型来源记录。 */
 	onPostNewSession?: (restoredSource: unknown) => Promise<void>;
+	/** Oryn：执行档位（TUI「continue with」滑条），帧上列出、审批时按 `role` 应用。 */
+	executionTiers?: OrynPlanExecutionTiers;
 }
 
 export class RpcPlanApprovalController {
@@ -155,6 +159,7 @@ export class RpcPlanApprovalController {
 			suggestedFileName: planSaveFileName(pending.title),
 			planContent,
 			options: [...PLAN_PROPOSAL_OPTIONS],
+			...this.#deps.executionTiers?.list(),
 		});
 		const session = this.#deps.session;
 		session.markPlanInternalAbortPending();
@@ -198,8 +203,9 @@ export class RpcPlanApprovalController {
 	 * Approve mirrors `InteractiveMode.#approvePlan` with these documented deltas:
 	 * - RPC plan mode never swapped the tool set or model on entry, so there is
 	 *   nothing to restore on exit (the TUI restores both).
-	 * - The TUI's model-tier slider (`executionModel`) is overlay-only; execution
-	 *   continues on the current model.
+	 * - Oryn: the TUI's model-tier slider (`executionModel`) is the `role` field
+	 *   (tiers advertised on `plan_proposal`, see `oryn-plan-tiers.ts`); without
+	 *   it execution continues on the restored pre-plan model.
 	 * - The compact path passes the distillation prompt as `customInstructions`
 	 *   to `session.compact` (the TUI rides a private `internalGuidance` channel,
 	 *   issue #4359); a failed/cancelled compaction leaves the approval standing
@@ -214,6 +220,7 @@ export class RpcPlanApprovalController {
 		option?: RpcPlanApprovalOption;
 		feedback?: string;
 		savePath?: string;
+		role?: string;
 	}): Promise<RpcPlanApprovalResult> {
 		const pending = this.#pending;
 		if (!pending) {
@@ -232,6 +239,9 @@ export class RpcPlanApprovalController {
 		}
 
 		const option = command.option ?? "execute";
+		// Oryn：所选执行档位先解析（未知 role 在任何状态变更前报错），恢复进入前模型之后再应用
+		const executionTier =
+			option !== "save" && command.role ? this.#deps.executionTiers?.resolve(command.role) : undefined;
 		const planFilePath = pending.planFilePath;
 		const planContent = await readPlanFile(planFilePath, {
 			localProtocolOptions: this.#localProtocolOptions(),
@@ -242,10 +252,12 @@ export class RpcPlanApprovalController {
 		}
 		if (option === "save") {
 			const savePath = command.savePath?.trim();
-			if (!savePath || !path.isAbsolute(savePath)) {
-				throw new Error("Saving a plan requires an absolute savePath");
+			if (!savePath) {
+				throw new Error("Saving a plan requires a savePath");
 			}
-			await fs.writeFile(savePath, planContent);
+			// Oryn：同 TUI `#savePlan`，相对路径按会话 cwd 解析，缺失的父目录随写入创建
+			const destination = resolveToCwd(savePath, session.sessionManager.getCwd());
+			await Bun.write(destination, planContent);
 			this.#pending = undefined;
 			session.setPlanModeState(undefined);
 			this.#disarm();
@@ -258,7 +270,7 @@ export class RpcPlanApprovalController {
 					approved: true,
 					dispatched: false,
 					reason: freshSessionStarted ? "saved" : "saved; new session cancelled",
-					savedPath: savePath,
+					savedPath: destination,
 					freshSessionStarted,
 				};
 			} catch (error) {
@@ -266,7 +278,7 @@ export class RpcPlanApprovalController {
 					approved: true,
 					dispatched: false,
 					reason: `saved; new session failed: ${error instanceof Error ? error.message : String(error)}`,
-					savedPath: savePath,
+					savedPath: destination,
 					freshSessionStarted: false,
 				};
 			}
@@ -310,8 +322,10 @@ export class RpcPlanApprovalController {
 				};
 			} finally {
 				await this.#deps.onDeferredModelRestore?.();
+				if (executionTier) await this.#deps.executionTiers?.apply(executionTier);
 			}
 		}
+		if (executionTier && option !== "compact") await this.#deps.executionTiers?.apply(executionTier);
 
 		session.setPlanReferencePath(planFilePath);
 		session.markPlanReferenceSent();
