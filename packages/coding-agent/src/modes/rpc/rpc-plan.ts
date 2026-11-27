@@ -32,8 +32,8 @@ import planModeCompactInstructionsPrompt from "../../prompts/system/plan-mode-co
 import type { AgentSession, AgentSessionEvent } from "../../session/agent-session";
 import { type PlanProposalHandler, proposeDispatchDetails } from "../../tools/resolve";
 import { resolveToCwd } from "../../tools/path-utils";
-import type { OrynPlanExecutionTiers } from "./oryn-plan-tiers";
 import type { RpcPlanApprovalOption, RpcPlanApprovalResult, RpcPlanProposalFrame } from "./rpc-types";
+import type { OrynPlanExecutionTiers, OrynPlanTierEntry } from "./oryn-plan-tiers";
 
 /** Options advertised on the `plan_proposal` frame (TUI review parity). */
 const PLAN_PROPOSAL_OPTIONS = ["execute", "compact", "keep_context", "save", "refine"];
@@ -41,6 +41,8 @@ const PLAN_PROPOSAL_OPTIONS = ["execute", "compact", "keep_context", "save", "re
 export interface RpcPendingPlanProposal {
 	planFilePath: string;
 	title: string;
+	/** Oryn：提案发出时的执行档位快照；审批只认这里的 role。 */
+	tiers?: OrynPlanTierEntry[];
 }
 
 interface RpcPlanApprovalControllerDeps {
@@ -54,9 +56,9 @@ interface RpcPlanApprovalControllerDeps {
 	onDeferredModelRestore?: () => Promise<void>;
 	/** Oryn：`execute` / `save` 在 `newSession()` 后补写恢复后的模型来源记录。 */
 	onPostNewSession?: (restoredSource: unknown) => Promise<void>;
-	/** Oryn：compact 路径压缩结束后要恢复到的进入前模型（作压缩摘要的读者）。 */
+	/** Oryn：退出计划模式时要恢复到的模型（选了档位后即该档位），作压缩摘要的读者与 keep_context 的窗口。 */
 	deferredRestoreModel?: () => Model | undefined;
-	/** Oryn：执行档位（TUI「continue with」滑条），帧上列出、审批时按 `role` 应用。 */
+	/** Oryn：执行档位（TUI「continue with」滑条），帧上列出、审批时按 `role` 作恢复目标。 */
 	executionTiers?: OrynPlanExecutionTiers;
 }
 
@@ -155,6 +157,8 @@ export class RpcPlanApprovalController {
 				localProtocolOptions: this.#localProtocolOptions(),
 				cwd: this.#deps.session.sessionManager.getCwd(),
 			})) ?? "";
+		const tiers = this.#deps.executionTiers?.snapshot();
+		pending.tiers = tiers?.entries;
 		this.#deps.output({
 			type: "plan_proposal",
 			planFilePath: pending.planFilePath,
@@ -162,7 +166,7 @@ export class RpcPlanApprovalController {
 			suggestedFileName: planSaveFileName(pending.title),
 			planContent,
 			options: [...PLAN_PROPOSAL_OPTIONS],
-			...this.#deps.executionTiers?.list(),
+			...tiers?.wire,
 		});
 		const session = this.#deps.session;
 		session.markPlanInternalAbortPending();
@@ -242,9 +246,16 @@ export class RpcPlanApprovalController {
 		}
 
 		const option = command.option ?? "execute";
-		// Oryn：所选执行档位先解析（未知 role 在任何状态变更前报错），恢复进入前模型之后再应用
-		const executionTier =
-			option !== "save" && command.role ? this.#deps.executionTiers?.resolve(command.role) : undefined;
+		// Oryn：执行档位只认提案发出时的快照；未知 role、keep_context 装不进执行模型窗口都在任何状态变更前报错
+		let executionTier: OrynPlanTierEntry | undefined;
+		if (option !== "save" && command.role) {
+			executionTier = pending.tiers?.find(entry => entry.role === command.role);
+			if (!executionTier) throw new Error(`Unknown plan execution role: ${command.role}`);
+		}
+		const executionModel = executionTier?.model ?? this.#deps.deferredRestoreModel?.() ?? session.model;
+		if (option === "keep_context" && executionModel) {
+			this.#deps.executionTiers?.assertKeepContextFits(executionModel);
+		}
 		const planFilePath = pending.planFilePath;
 		const planContent = await readPlanFile(planFilePath, {
 			localProtocolOptions: this.#localProtocolOptions(),
@@ -253,13 +264,25 @@ export class RpcPlanApprovalController {
 		if (!planContent) {
 			throw new Error(`Plan file not found at ${planFilePath}`);
 		}
+		// Oryn：提案待批期间宿主又发了消息、规划回合还在跑时先静默中止它（TUI 只在没有回合运行时打开审阅），
+		// 让模型恢复 / 档位切换立即落地，执行回合不会被跑着的循环先在计划模型上接走
+		if (session.isStreaming) {
+			session.markPlanInternalAbortPending();
+			try {
+				await session.abort();
+			} finally {
+				session.clearPlanInternalAbortPending();
+			}
+		}
 		if (option === "save") {
 			const savePath = command.savePath?.trim();
 			if (!savePath) {
 				throw new Error("Saving a plan requires a savePath");
 			}
-			// Oryn：同 TUI `#savePlan`，相对路径按会话 cwd 解析，缺失的父目录随写入创建
-			const destination = resolveToCwd(savePath, session.sessionManager.getCwd());
+			// Oryn：同 TUI `#savePlan`，相对路径按会话 cwd 解析（绝对路径原样使用），缺失的父目录随写入创建
+			const destination = path.isAbsolute(savePath)
+				? savePath
+				: resolveToCwd(savePath, session.sessionManager.getCwd());
 			await Bun.write(destination, planContent);
 			this.#pending = undefined;
 			session.setPlanModeState(undefined);
@@ -291,6 +314,7 @@ export class RpcPlanApprovalController {
 		this.#pending = undefined;
 		session.setPlanModeState(undefined);
 		this.#disarm();
+		if (executionTier) this.#deps.executionTiers?.select(executionTier);
 		const restoredSource = await this.#deps.onExitPlanMode?.({ deferModelRestore: option === "compact" });
 		session.sessionManager.appendModeChange("none");
 
@@ -313,10 +337,9 @@ export class RpcPlanApprovalController {
 			session.setPlanReferencePath(planFilePath);
 			const compactionPrompt = prompt.render(planModeCompactInstructionsPrompt, { planFilePath });
 			try {
-				// Oryn：同 TUI，压缩摘要的读者是之后执行用的模型（所选档位，否则恢复的进入前模型），
-				// 让 remote 压缩避开读者无法回放的原生载荷
-				const readerModel = executionTier?.model ?? this.#deps.deferredRestoreModel?.();
-				await session.compact(compactionPrompt, readerModel ? { readerModel } : undefined);
+				// Oryn：同 TUI，压缩摘要的读者是之后执行用的模型，让 remote 压缩避开读者无法回放的原生载荷；
+				// 执行回合由这里派发，压缩不另行续跑被打断的回合
+				await session.compact(compactionPrompt, { readerModel: executionModel, suppressContinuation: true });
 			} catch (error) {
 				// Cancelled/failed compaction: approval stands, execution is not
 				// dispatched, and the plan reference stays pinned for the host's
@@ -328,10 +351,8 @@ export class RpcPlanApprovalController {
 				};
 			} finally {
 				await this.#deps.onDeferredModelRestore?.();
-				if (executionTier) await this.#deps.executionTiers?.apply(executionTier);
 			}
 		}
-		if (executionTier && option !== "compact") await this.#deps.executionTiers?.apply(executionTier);
 
 		session.setPlanReferencePath(planFilePath);
 		session.markPlanReferenceSent();

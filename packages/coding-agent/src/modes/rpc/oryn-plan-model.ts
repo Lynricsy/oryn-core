@@ -19,7 +19,7 @@
  */
 import * as path from "node:path";
 import type { Model } from "@oh-my-pi/pi-ai";
-import { modelsAreEqual } from "@oh-my-pi/pi-catalog/models";
+import { modelsAreEqual, routedModelsAreEqual } from "@oh-my-pi/pi-catalog/models";
 import type { ModelRoleLookup } from "../view-model/overlays/model-browser";
 import type { ConfiguredThinkingLevel } from "../../utils/render-utils";
 import type { ResolvedModelRoleValue } from "../../config/model-resolver";
@@ -34,6 +34,7 @@ import {
 import { findMostRecentNonEmptySession, findRecentSessionContinuation } from "../../session/session-listing";
 import { loadEntriesFromFile } from "../../session/session-loader";
 import { ORYN_MODEL_SOURCE_ENTRY, type OrynModelSourceData, roleAliasTarget } from "./oryn-model-source";
+import type { OrynPlanExecutionTarget } from "./oryn-plan-tiers";
 
 /** 计划模式进入前基线的自定义条目 `customType`（不进 LLM 上下文，对上游透明）。 */
 export const ORYN_PLAN_BASELINE_ENTRY = "oryn-plan-baseline";
@@ -70,6 +71,8 @@ interface PreviousPlanModelState {
 	model: Model;
 	thinkingLevel: ConfiguredThinkingLevel | undefined;
 	sourceRecord?: OrynModelSourceData;
+	/** 执行档位换掉恢复目标时留下的原基线：切到档位失败（如该供应商已登出）就退回它，不留在计划模型上。 */
+	fallback?: PreviousPlanModelState;
 }
 
 type PendingPlanModelSwitch =
@@ -256,6 +259,21 @@ export class OrynPlanModelController {
 	/** 进入前基线的模型（退出计划模式时要恢复到的模型）；没有基线时为 `undefined`。 */
 	get baselineModel(): Model | undefined {
 		return this.#previousState?.model;
+	}
+
+	/**
+	 * 计划审批选了执行档位（`oryn-plan-tiers.ts`）：把退出计划模式时的恢复目标换成该档位——模型、思考级别
+	 * （档位没有显式级别时沿用原基线的）与 role 来源记录。之后的恢复（流式延后、compact 延后、新会话补写来源、
+	 * 基线落盘）都落在档位上。没有进入前基线（没切过计划模型）时同样设为恢复目标，退出时切过去。
+	 */
+	setExecutionTarget(target: OrynPlanExecutionTarget): void {
+		const prev = this.#previousState;
+		this.#previousState = {
+			model: target.model,
+			thinkingLevel: target.thinkingLevel ?? (prev ? prev.thinkingLevel : this.#session.configuredThinkingLevel()),
+			sourceRecord: target.sourceRecord,
+			fallback: prev,
+		};
 	}
 
 	/**
@@ -552,7 +570,7 @@ export class OrynPlanModelController {
 		const gen = ++this.#generation;
 		try {
 			await this.#session.setModelTemporary(pending.model, pending.thinkingLevel);
-			const landed = modelsAreEqual(this.#session.model, pending.model);
+			const landed = routedModelsAreEqual(this.#session.model, pending.model);
 			if (!landed || gen !== this.#generation) return;
 			if (pending.kind === "plan") {
 				await this.#recordPlanSource();
@@ -647,7 +665,8 @@ export class OrynPlanModelController {
 	}
 
 	async #restorePrevious(prev: PreviousPlanModelState): Promise<void> {
-		if (modelsAreEqual(this.#session.model, prev.model)) {
+		// 比较带上游 pin：执行档位可能把同一 OpenRouter / Gateway 模型钉到别的上游
+		if (routedModelsAreEqual(this.#session.model, prev.model)) {
 			// 同模型：只恢复思考级别（不切模型、不发 model_changed），并写回进入前的来源记录，让回合头离开 plan 角色
 			this.#session.setThinkingLevel(prev.thinkingLevel);
 			if (prev.sourceRecord && modelMatchesRecord(this.#session.model, prev.sourceRecord)) {
@@ -673,7 +692,7 @@ export class OrynPlanModelController {
 		const gen = ++this.#generation;
 		try {
 			await this.#session.setModelTemporary(prev.model, prev.thinkingLevel);
-			const landed = modelsAreEqual(this.#session.model, prev.model);
+			const landed = routedModelsAreEqual(this.#session.model, prev.model);
 			if (landed && gen === this.#generation) {
 				if (prev.sourceRecord && modelMatchesRecord(this.#session.model, prev.sourceRecord)) {
 					await this.#appendSourceRecord(prev.sourceRecord);
@@ -684,6 +703,7 @@ export class OrynPlanModelController {
 			this.#onWarning?.(
 				`Failed to restore previous model after plan mode: ${error instanceof Error ? error.message : String(error)}`,
 			);
+			if (prev.fallback) await this.#restorePrevious(prev.fallback);
 		}
 	}
 

@@ -2189,9 +2189,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 		onDeferredModelRestore: () => planModelController.applyDeferredRestore(),
 		onPostNewSession: restored =>
 			planModelController.recordRestoredSourceAfterNewSession(restored as OrynModelSourceData | undefined),
-		executionTiers: createOrynPlanExecutionTiers(session, message =>
-			output({ type: "notice", level: "warning", message, source: "plan-mode" }),
-		),
+		executionTiers: createOrynPlanExecutionTiers(session, target => planModelController.setExecutionTarget(target)),
 	});
 	const vibeModeController = new RpcVibeModeController(session);
 	const goalModeController = new RpcGoalModeController({

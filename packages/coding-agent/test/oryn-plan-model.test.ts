@@ -664,6 +664,18 @@ describe("RPC plan mode model switching", () => {
 		expect((await rpc.state()).model?.id).toBe("claude-sonnet-4-5");
 	});
 
+	test("approval runs on the tier the proposal advertised even if the role is reassigned during review", async () => {
+		const rpc = await start({
+			ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high",
+			ORYN_SLOW_ROLE: "anthropic/claude-opus-4-6",
+			ORYN_PROPOSE_ON_TURN: "1",
+		});
+		await propose(rpc);
+		await rpc.data({ type: "set_model_role", role: "slow", modelId: "anthropic/claude-haiku-4-5" });
+		await rpc.data({ type: "plan_approval", approved: true, option: "keep_context", role: "slow" });
+		expect((await rpc.state()).model?.id).toBe("claude-opus-4-6");
+	});
+
 	test("save resolves a relative savePath against the session cwd", async () => {
 		const rpc = await start({ ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high", ORYN_PROPOSE_ON_TURN: "1" });
 		await propose(rpc);
