@@ -2185,6 +2185,7 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions 
 		output,
 		onError: err => output(error(undefined, "plan_approval", err.message)),
 		onExitPlanMode: options => planModelController.onExitPlanMode(options),
+		deferredRestoreModel: () => planModelController.baselineModel,
 		onDeferredModelRestore: () => planModelController.applyDeferredRestore(),
 		onPostNewSession: restored =>
 			planModelController.recordRestoredSourceAfterNewSession(restored as OrynModelSourceData | undefined),

@@ -19,6 +19,7 @@
  * are documented on {@link RpcPlanApprovalController.resolve}.
  */
 import * as fs from "node:fs/promises";
+import type { Model } from "@oh-my-pi/pi-ai";
 import * as path from "node:path";
 import { AgentBusyError } from "@oh-my-pi/pi-agent-core";
 import { isEnoent, prompt } from "@oh-my-pi/pi-utils";
@@ -53,6 +54,8 @@ interface RpcPlanApprovalControllerDeps {
 	onDeferredModelRestore?: () => Promise<void>;
 	/** Oryn：`execute` / `save` 在 `newSession()` 后补写恢复后的模型来源记录。 */
 	onPostNewSession?: (restoredSource: unknown) => Promise<void>;
+	/** Oryn：compact 路径压缩结束后要恢复到的进入前模型（作压缩摘要的读者）。 */
+	deferredRestoreModel?: () => Model | undefined;
 	/** Oryn：执行档位（TUI「continue with」滑条），帧上列出、审批时按 `role` 应用。 */
 	executionTiers?: OrynPlanExecutionTiers;
 }
@@ -310,7 +313,10 @@ export class RpcPlanApprovalController {
 			session.setPlanReferencePath(planFilePath);
 			const compactionPrompt = prompt.render(planModeCompactInstructionsPrompt, { planFilePath });
 			try {
-				await session.compact(compactionPrompt);
+				// Oryn：同 TUI，压缩摘要的读者是之后执行用的模型（所选档位，否则恢复的进入前模型），
+				// 让 remote 压缩避开读者无法回放的原生载荷
+				const readerModel = executionTier?.model ?? this.#deps.deferredRestoreModel?.();
+				await session.compact(compactionPrompt, readerModel ? { readerModel } : undefined);
 			} catch (error) {
 				// Cancelled/failed compaction: approval stands, execution is not
 				// dispatched, and the plan reference stays pinned for the host's

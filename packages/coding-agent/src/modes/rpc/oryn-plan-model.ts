@@ -253,6 +253,11 @@ export class OrynPlanModelController {
 		return this.#pendingSwitch !== undefined;
 	}
 
+	/** 进入前基线的模型（退出计划模式时要恢复到的模型）；没有基线时为 `undefined`。 */
+	get baselineModel(): Model | undefined {
+		return this.#previousState?.model;
+	}
+
 	/**
 	 * `open_session` 前置：Oryn 每次拉起 agent 都在 `open_session` 里带上线程常驻的模型与思考级别（线程行里存的是实际档位，
 	 * 没有 `auto`）。落地的会话处于计划模式且已在计划模型上时，这两项都不立即应用——否则会把计划模型冲掉：

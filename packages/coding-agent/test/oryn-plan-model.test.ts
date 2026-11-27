@@ -678,6 +678,28 @@ describe("RPC plan mode model switching", () => {
 		expect(await fs.readFile(expected, "utf8")).toContain("# Test Plan");
 	});
 
+	test("compact with a role lands on that tier even when compaction fails", async () => {
+		const rpc = await start({
+			ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high",
+			ORYN_SLOW_ROLE: "anthropic/claude-opus-4-6",
+			ORYN_PROPOSE_ON_TURN: "1",
+		});
+		await propose(rpc);
+		const result = await rpc.data<{ approved: boolean; dispatched: boolean; reason?: string }>({
+			type: "plan_approval",
+			approved: true,
+			option: "compact",
+			role: "slow",
+		});
+		// 夹具会话太短，压缩失败：批准仍成立、不派发，但模型仍从计划模型换到所选档位
+		expect(result.dispatched).toBe(false);
+		expect(result.reason).toStartWith("compaction failed");
+		const after = await rpc.state();
+		expect(after.planModeEnabled).toBe(false);
+		expect(after.model?.id).toBe("claude-opus-4-6");
+		expect(lastSource(await rpc.readSessionEntries(after.sessionFile!))).toMatchObject({ role: "slow" });
+	});
+
 	test("manual model switch during streaming cancels deferred plan model switch", async () => {
 		const rpc = await start({
 			ORYN_PLAN_ROLE: "anthropic/claude-opus-4-6:high",
